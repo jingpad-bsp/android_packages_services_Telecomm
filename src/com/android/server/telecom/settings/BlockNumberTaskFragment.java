@@ -50,13 +50,17 @@ public class BlockNumberTaskFragment extends Fragment {
             if (BlockedNumberContract.isBlocked(getContext(), mNumber)) {
                 return false;
             } else {
-                ContentResolver contentResolver = getContext().getContentResolver();
-                ContentValues newValues = new ContentValues();
-                newValues.put(BlockedNumberContract.BlockedNumbers.COLUMN_ORIGINAL_NUMBER,
-                        mNumber);
-                contentResolver.insert(BlockedNumberContract.BlockedNumbers.CONTENT_URI,
-                        newValues);
-                return true;
+                //UNISOC:add for bug1182014
+                if (getContext() != null && getContext().getContentResolver() != null) {
+                    ContentResolver contentResolver = getContext().getContentResolver();
+                    ContentValues newValues = new ContentValues();
+                    newValues.put(BlockedNumberContract.BlockedNumbers.COLUMN_ORIGINAL_NUMBER,
+                            mNumber);
+                    contentResolver.insert(BlockedNumberContract.BlockedNumbers.CONTENT_URI,
+                            newValues);
+                    return true;
+                }
+                return false;
             }
         }
 

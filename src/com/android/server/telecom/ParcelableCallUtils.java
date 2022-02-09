@@ -156,10 +156,13 @@ public class ParcelableCallUtils {
             properties |= android.telecom.Call.Details.PROPERTY_VOIP_AUDIO_MODE;
         }
 
+        /* UNISOC: add for bug1117390, no SMS reject function when incoming
+         * @orig
         // If this is a single-SIM device, the "default SIM" will always be the only SIM.
         boolean isDefaultSmsAccount = phoneAccountRegistrar != null &&
                 phoneAccountRegistrar.isUserSelectedSmsPhoneAccount(call.getTargetPhoneAccount());
-        if (call.isRespondViaSmsCapable() && isDefaultSmsAccount) {
+        if (call.isRespondViaSmsCapable() && isDefaultSmsAccount) {{ */
+        if (call.isRespondViaSmsCapable()) {
             capabilities |= android.telecom.Call.Details.CAPABILITY_RESPOND_VIA_TEXT;
         }
 
@@ -538,7 +541,11 @@ public class ParcelableCallUtils {
         android.telecom.Call.Details.PROPERTY_RTT,
 
         Connection.PROPERTY_NETWORK_IDENTIFIED_EMERGENCY_CALL,
-        android.telecom.Call.Details.PROPERTY_NETWORK_IDENTIFIED_EMERGENCY_CALL
+        android.telecom.Call.Details.PROPERTY_NETWORK_IDENTIFIED_EMERGENCY_CALL,
+
+        //UNISOC: Add for MT conference call
+        Connection.PROPERTY_IS_MT_CONFERENCE_CALL,
+        android.telecom.Call.Details.PROPERTY_CONFERENCE
     };
 
     private static int convertConnectionToCallProperties(int connectionProperties) {

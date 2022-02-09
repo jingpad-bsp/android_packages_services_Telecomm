@@ -16,10 +16,18 @@
 
 package com.android.server.telecom;
 
+import android.app.AlertDialog;
 import android.content.Context;
+import android.os.Bundle;
 import android.preference.EditTextPreference;
+import android.text.Editable;
+import android.text.InputFilter;
+import android.text.TextUtils;
+import android.text.TextWatcher;
 import android.util.AttributeSet;
 import android.view.View;
+import android.widget.Button;
+import android.widget.EditText;
 import android.widget.TextView;
 
 /**
@@ -45,6 +53,11 @@ import android.widget.TextView;
  * <view class="com.android.server.telecom.Foo$Bar"> as you can with regular views.
  */
 public class MultiLineTitleEditTextPreference extends EditTextPreference {
+    /* UNISOC: modify by bug1138077 @{ */
+    private Button mPositiveButton;
+    private EditText mEditText;
+    /* @} */
+
     public MultiLineTitleEditTextPreference(Context context, AttributeSet attrs, int defStyle) {
         super(context, attrs, defStyle);
     }
@@ -69,5 +82,50 @@ public class MultiLineTitleEditTextPreference extends EditTextPreference {
         if (textView != null) {
             textView.setSingleLine(false);
         }
+        /* UNISOC: modify by bug1138077 @{ */
+        mEditText = getEditText();
+        mEditText.addTextChangedListener(mTextWatcher);
+        /* @} */
+        // UNISOC: modify for bug1137364
+        mEditText.setFilters(new InputFilter[]{new InputFilter.LengthFilter(100)});
     }
+
+    /* UNISOC: modify by bug1138077 @{ */
+    @Override
+    protected void showDialog(Bundle state) {
+        super.showDialog(state);
+        final AlertDialog editDialog = (AlertDialog) getDialog();
+        mPositiveButton = editDialog.getButton(AlertDialog.BUTTON_POSITIVE);
+        /* UNISOC: modify by bug1139816 1158480 @{ */
+        if (mEditText != null) {
+            mEditText.setFocusable(true);
+            mEditText.setFocusableInTouchMode(true);
+            mEditText.requestFocus();
+            mEditText.setSelection(mEditText.getText().length());
+        }
+        /* @} */
+    }
+
+    private TextWatcher mTextWatcher = new TextWatcher() {
+
+        @Override
+        public void onTextChanged(CharSequence s, int start, int before,
+                                  int count) {
+            if (mPositiveButton != null) {
+                mPositiveButton.setEnabled(s.toString() != null
+                        && !TextUtils.isEmpty(s.toString().trim()));
+            }
+        }
+
+        @Override
+        public void beforeTextChanged(CharSequence s, int start, int count,
+                                      int after) {
+
+        }
+
+        @Override
+        public void afterTextChanged(Editable s) {//modify for bug1180771
+        }
+    };
+    /* @} */
 }

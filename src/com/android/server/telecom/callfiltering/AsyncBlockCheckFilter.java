@@ -49,6 +49,9 @@ public class AsyncBlockCheckFilter extends AsyncTask<String, Void, Boolean>
     private CallerInfoLookupHelper mCallerInfoLookupHelper;
     private int mBlockStatus = BlockedNumberContract.STATUS_NOT_BLOCKED;
 
+    // Unisoc FL0108060002: CallFireWall
+    private static int MARK_CALL_BLOCK_TYPE = 1;
+
     public AsyncBlockCheckFilter(Context context, BlockCheckerAdapter blockCheckerAdapter,
             CallerInfoLookupHelper callerInfoLookupHelper, CallBlockListener callBlockListener) {
         mContext = context;
@@ -108,7 +111,9 @@ public class AsyncBlockCheckFilter extends AsyncTask<String, Void, Boolean>
                 extras.putBoolean(BlockedNumberContract.EXTRA_CONTACT_EXIST,
                         Boolean.valueOf(params[2]));
             }
-            mBlockStatus = mBlockCheckerAdapter.getBlockStatus(mContext, params[0], extras);
+            // Unisoc FL0108060002: CallFireWall
+            int callBlockType = MARK_CALL_BLOCK_TYPE;
+            mBlockStatus = mBlockCheckerAdapter.getBlockStatus(mContext, params[0], extras, callBlockType);
             return mBlockStatus != BlockedNumberContract.STATUS_NOT_BLOCKED;
         } finally {
             Log.endSession();

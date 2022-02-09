@@ -21,7 +21,7 @@
          call log. Some carriers require that emergency calls *not* be logged, presumably to
          avoid the risk of accidental redialing from the call log UI.
          The default is false. -->
-    <bool name="allow_emergency_numbers_in_call_log">false</bool>
+    <bool name="allow_emergency_numbers_in_call_log">true</bool>
 
     <!-- Determine whether we want to play local DTMF tones in a call, or just let the radio/BP
          handle playing of the tones. -->
@@ -29,6 +29,9 @@
 
     <!-- Class name for the default in-call UI Service [DO NOT TRANSLATE] -->
     <string name="incall_default_class" translatable="false">com.android.incallui.InCallServiceImpl</string>
+
+    <!-- Package name for the default in-call UI and dialer [DO NOT TRANSLATE] -->
+    <string name="ui_default_package" translatable="false">com.android.dialer</string>
 
     <!-- Class name for the default main dialer activity [DO NOT TRANSLATE] -->
     <string name="dialer_default_class" translatable="false">com.android.dialer.DialtactsActivity</string>
@@ -74,4 +77,10 @@
     <!-- When true, the options in the call blocking settings to block restricted and unknown
          callers are combined into a single toggle. -->
     <bool name="combine_options_to_block_restricted_and_unknown_callers">true</bool>
+
+    <!-- UNISOC:follow bug1068889 -->
+    <bool name="config_is_show_ims_icon_in_calllog">false</bool>
+
+    <!--UNISOC:modify for bug1147838-->
+    <bool name="config_is_show_main_vice_card_feature">false</bool>
 </resources>

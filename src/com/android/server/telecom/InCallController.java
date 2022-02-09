@@ -29,6 +29,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.Parcel;
 import android.os.RemoteException;
 import android.os.Trace;
 import android.os.UserHandle;
@@ -39,6 +40,7 @@ import android.telecom.Log;
 import android.telecom.Logging.Runnable;
 import android.telecom.ParcelableCall;
 import android.telecom.TelecomManager;
+import android.telephony.SubscriptionManager;
 import android.text.TextUtils;
 import android.util.ArrayMap;
 
@@ -47,6 +49,7 @@ import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telecom.IInCallService;
 import com.android.internal.util.IndentingPrintWriter;
 import com.android.server.telecom.SystemStateHelper.SystemStateListener;
+import com.android.sprd.telephony.RadioInteractor;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -826,6 +829,8 @@ public class InCallController extends CallsManagerListenerBase {
                         unbindFromServices();
 
                         mEmergencyCallHelper.maybeRevokeTemporaryLocationPermission();
+                        Log.d(this, "test --- mCallsManager.getCalls().isEmpty()");
+                        updateSARStatus(false);
                     }
                 }
             }.prepare(), mTimeoutsAdapter.getCallRemoveUnbindInCallServicesDelay(
@@ -926,12 +931,32 @@ public class InCallController extends CallsManagerListenerBase {
         if (!mInCallServices.isEmpty()) {
             Log.i(this, "Calling onAudioStateChanged, audioState: %s -> %s", oldCallAudioState,
                     newCallAudioState);
+            if (newCallAudioState.getRoute() == CallAudioState.ROUTE_EARPIECE) {
+                updateSARStatus(true);
+            } else {
+                updateSARStatus(false);
+            }
             for (IInCallService inCallService : mInCallServices.values()) {
                 try {
                     inCallService.onCallAudioStateChanged(newCallAudioState);
                 } catch (RemoteException ignored) {
                 }
             }
+        }
+    }
+
+    //add for bug1236352 (SPCSS00647454)
+    private RadioInteractor mRadioInteractor;
+    private void updateSARStatus(boolean enableSar) {
+        Log.d(this, "test --- updateSARStatus:" + enableSar);
+        if (mRadioInteractor == null) {
+            mRadioInteractor = new RadioInteractor(mContext);
+        }
+        int phoneId = SubscriptionManager.getPhoneId(SubscriptionManager
+                .getDefaultDataSubscriptionId());
+        Log.d(this, "test --- phoneId:"+phoneId);
+        if(SubscriptionManager.isValidPhoneId(phoneId)) {
+            mRadioInteractor.enableRadioPowerFallback(enableSar, phoneId);
         }
     }
 
@@ -1380,6 +1405,8 @@ public class InCallController extends CallsManagerListenerBase {
                 "calls", calls.size(), info.getComponentName());
         int numCallsSent = 0;
         for (Call call : calls) {
+            // UNISOC: add for bug1137449
+            ParcelableCall parcelableCall = null;
             try {
                 if ((call.isSelfManaged() && !info.isSelfManagedCallsSupported()) ||
                         (call.isExternalCall() && !info.isExternalCallsSupported())) {
@@ -1392,20 +1419,29 @@ public class InCallController extends CallsManagerListenerBase {
                 // Track the call if we don't already know about it.
                 addCall(call);
                 numCallsSent += 1;
-                inCallService.addCall(ParcelableCallUtils.toParcelableCall(
+                // UNISOC: add for bug1137449
+                parcelableCall = ParcelableCallUtils.toParcelableCall(
                         call,
                         true /* includeVideoProvider */,
                         mCallsManager.getPhoneAccountRegistrar(),
                         info.isExternalCallsSupported(),
                         includeRttCall,
-                        info.getType() == IN_CALL_SERVICE_TYPE_SYSTEM_UI));
+                        info.getType() == IN_CALL_SERVICE_TYPE_SYSTEM_UI);
+                inCallService.addCall(parcelableCall);
             } catch (RemoteException ignored) {
+                // UNISOC: add for bug1137449
+                Log.i(this, "parcelableCall:" + (parcelableCall == null ? "null" :
+                        (parcelableCall.toString() + ", extrasSize:" + (parcelableCall.getExtras() == null ? "0" : parcelableCall.getExtras().getSize()) +
+                        "IntentExtrasSize: " + (parcelableCall.getIntentExtras() == null ? "0" : parcelableCall.getIntentExtras().getSize()))));
+                Log.e(this, ignored, "add call fialed");
             }
         }
         try {
             inCallService.onCallAudioStateChanged(mCallsManager.getAudioState());
             inCallService.onCanAddCallChanged(mCallsManager.canAddCall());
         } catch (RemoteException ignored) {
+            // UNISOC: add for bug1137449
+            Log.e(this, ignored, "changed event failed");
         }
         mBindingFuture.complete(true);
         Log.i(this, "%s calls sent to InCallService.", numCallsSent);
@@ -1470,6 +1506,14 @@ public class InCallController extends CallsManagerListenerBase {
                 try {
                     inCallService.updateCall(parcelableCall);
                 } catch (RemoteException ignored) {
+                    // UNISOC: add for bug1137437
+                    Parcel parcelCall = Parcel.obtain();
+                    parcelableCall.writeToParcel(parcelCall,0);
+                    Log.i(this, "parcelableCall:" + (parcelableCall == null ? "null" :
+                            (parcelableCall.toString() + ", extrasSize:" + (parcelableCall.getExtras() == null ? "0" : parcelableCall.getExtras().getSize()) +
+                                    ",IntentExtrasSize: " + (parcelableCall.getIntentExtras() == null ? "0" : parcelableCall.getIntentExtras().getSize())))
+                            + ",parcelableCall.size:"+ parcelCall.dataSize());
+                    Log.e(this, ignored, "add call fialed");
                 }
             }
             Log.i(this, "Components updated: %s", componentsUpdated);

@@ -37,6 +37,7 @@ import android.provider.BlockedNumberContract;
 import android.telephony.PhoneNumberFormattingTextWatcher;
 import android.telephony.PhoneNumberUtils;
 import android.text.Editable;
+import android.text.InputFilter;
 import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.view.LayoutInflater;
@@ -60,6 +61,8 @@ import com.android.server.telecom.R;
 public class BlockedNumbersActivity extends ListActivity
         implements LoaderManager.LoaderCallbacks<Cursor>, View.OnClickListener, TextWatcher,
         BlockNumberTaskFragment.Listener {
+    // UNISOC: add for bug1210533
+    private static final int NUMBER_LIMITED_LENTH = 100;
     private static final String ACTION_MANAGE_BLOCKED_NUMBERS =
             "android.telecom.action.MANAGE_BLOCKED_NUMBERS";
     private static final String TAG_BLOCK_NUMBER_TASK_FRAGMENT = "block_number_task_fragment";
@@ -82,6 +85,8 @@ public class BlockedNumbersActivity extends ListActivity
     private TextView mReEnableButton;
 
     private BroadcastReceiver mBlockingStatusReceiver;
+    // UNISOC: add for bug1187948
+    private AlertDialog dialog;
 
     public static Intent getIntentForStartingActivity() {
         Intent intent = new Intent(ACTION_MANAGE_BLOCKED_NUMBERS);
@@ -159,6 +164,14 @@ public class BlockedNumbersActivity extends ListActivity
     protected void onDestroy() {
         if (mBlockingStatusReceiver != null) {
             unregisterReceiver(mBlockingStatusReceiver);
+        }
+        // UNISOC: add for bug1187948
+        if (dialog != null) {
+            dialog.dismiss();
+        }
+        // UNISOC: add for bug1197335
+        if (mAdapter != null) {
+            mAdapter.onDestroy();
         }
         super.onDestroy();
     }
@@ -239,9 +252,11 @@ public class BlockedNumbersActivity extends ListActivity
         LayoutInflater inflater = this.getLayoutInflater();
         View dialogView = inflater.inflate(R.xml.add_blocked_number_dialog, null);
         final EditText editText = (EditText) dialogView.findViewById(R.id.add_blocked_number);
+        // UNISOC: add for bug1210533
+        editText.setFilters(new InputFilter[]{new InputFilter.LengthFilter(NUMBER_LIMITED_LENTH)});
         editText.addTextChangedListener(new PhoneNumberFormattingTextWatcher());
         editText.addTextChangedListener(this);
-        AlertDialog dialog = new AlertDialog.Builder(this)
+        dialog = new AlertDialog.Builder(this)
                 .setView(dialogView)
                 .setPositiveButton(R.string.block_button, new DialogInterface.OnClickListener() {
                     public void onClick(DialogInterface dialog, int id) {

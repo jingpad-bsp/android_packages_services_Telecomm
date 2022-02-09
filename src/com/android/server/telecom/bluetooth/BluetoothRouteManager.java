@@ -631,6 +631,18 @@ public class BluetoothRouteManager extends StateMachine {
 
         String actualAddress = matchingDevice.isPresent()
                 ? address : getActiveDeviceAddress();
+        /* UNISOC: add for bug1140190 @{ */
+        if (actualAddress == null && mMostRecentlyReportedActiveDevice != null) {
+            Optional<BluetoothDevice> recentlyDevice = deviceList.stream()
+                    .filter(d -> Objects.equals(d.getAddress(), mMostRecentlyReportedActiveDevice.getAddress()))
+                    .findAny();
+            if (recentlyDevice.isPresent()) {
+                Log.i(this, "No device specified and BT stack has no active device."
+                        + " Using the most recently reported active device");
+                actualAddress = recentlyDevice.get().getAddress();
+            }
+        }
+        /* @} */
         if (actualAddress == null) {
             Log.i(this, "No device specified and BT stack has no active device."
                     + " Using arbitrary device");

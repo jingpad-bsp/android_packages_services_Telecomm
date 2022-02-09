@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+<string name="incomingcall_flipping_silence_title">"ခေါ်ဆိုမှုကို အသံဖျောက်ရန် ဖုန်းကို မှောက်လိုက်ပါ"</string>
+<string name="flipping_summary">"အဝင်ဖုန်းကို အသံတိတ်ရန် ဖုန်းကို မှောက်လိုက်ပါ"</string>
+<string name="main_card_slot">"ပင်မ ကတ်-"</string>
+<string name="vice_card_slot">"ဒုတိယ ကတ်-"</string>
+<string name="fade_in_title">"မြည်သံ အသံတိုးသွားရန်"</string>
+<string name="fade_in_summary">"ဖွင့်ထားသောအခါ အဝင်ဖုန်းမြည်သံပမာဏသည် အသံတိုးသွားပါမည်။"</string>
+</resources>

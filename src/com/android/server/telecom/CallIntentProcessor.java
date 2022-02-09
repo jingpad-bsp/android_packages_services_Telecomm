@@ -12,6 +12,7 @@ import android.os.UserHandle;
 import android.os.UserManager;
 import android.telecom.DefaultDialerManager;
 import android.telecom.Log;
+import android.content.res.Resources;
 import android.telecom.Logging.Session;
 import android.telecom.PhoneAccount;
 import android.telecom.PhoneAccountHandle;
@@ -22,6 +23,9 @@ import android.telephony.PhoneNumberUtils;
 import android.widget.Toast;
 
 import java.util.concurrent.CompletableFuture;
+
+// Unisoc FL1000060389: Show Rejected calls notifier feature. 
+import com.unisoc.server.telecom.TelecomCmccHelper;
 
 /**
  * Single point of entry for all outgoing and incoming calls.
@@ -104,6 +108,24 @@ public class CallIntentProcessor {
             Intent intent,
             String callingPackage) {
 
+        /* SPRD porting: Add for CMCC requirement bug693518 @{ */
+        int intentVideoState = intent.getIntExtra(TelecomManager.EXTRA_START_CALL_WITH_VIDEO_STATE,
+                VideoProfile.STATE_AUDIO_ONLY);
+        if (TelecomCmccHelper.getInstance(context).shouldPreventAddVideoCall(callsManager,
+                intentVideoState, callsManager.hasVideoCall())) {
+            return;
+        }/* @} */
+
+        /* Unisoc: Add for VoLTE @{ */
+        Bundle b = intent.getExtras();
+        boolean isConferenceDial = false;
+        String[] callees = null;
+        if(b != null){
+            isConferenceDial = b.getBoolean("android.intent.extra.IMS_CONFERENCE_REQUEST",false);
+            callees = b.getStringArray("android.intent.extra.IMS_CONFERENCE_PARTICIPANTS");
+            Log.d(CallIntentProcessor.class, "processOutgoingCallIntent->isConferenceDial:"+isConferenceDial);
+        }
+        /* @} */
         Uri handle = intent.getData();
         String scheme = handle.getScheme();
         String uriString = handle.getSchemeSpecificPart();
@@ -123,6 +145,11 @@ public class CallIntentProcessor {
         if (clientExtras == null) {
             clientExtras = new Bundle();
         }
+
+        /* Unisoc: Add for VoLTE @{ */
+        clientExtras.putBoolean("android.intent.extra.IMS_CONFERENCE_REQUEST",isConferenceDial);
+        clientExtras.putStringArray("android.intent.extra.IMS_CONFERENCE_PARTICIPANTS",callees);
+        /* @} */
 
         if (intent.hasExtra(TelecomManager.EXTRA_IS_USER_INTENT_EMERGENCY_CALL)) {
             clientExtras.putBoolean(TelecomManager.EXTRA_IS_USER_INTENT_EMERGENCY_CALL,
@@ -156,6 +183,39 @@ public class CallIntentProcessor {
         }
 
         UserHandle initiatingUser = intent.getParcelableExtra(KEY_INITIATING_USER);
+
+        /* Unisoc: add for bug1217411 @{ */
+        // Don't launch the Incall UI to unless caller is system or default dialer.
+        // when calling potential emergency number with ACTION_CALL Intent
+        PhoneAccountHandle targetPhoneAccount = intent.getParcelableExtra(
+                TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE);
+        boolean isSelfManaged = false;
+        if (targetPhoneAccount != null) {
+            PhoneAccount phoneAccount =
+                    callsManager.getPhoneAccountRegistrar().getPhoneAccountUnchecked(
+                            targetPhoneAccount);
+            if (phoneAccount != null) {
+                isSelfManaged = phoneAccount.isSelfManaged();
+            }
+        }
+        if (!isSelfManaged) {
+            boolean isPrivilegedDialer = intent.getBooleanExtra(KEY_IS_PRIVILEGED_DIALER, false);
+            boolean isPotentialEmergencyNumber = uriString != null && callsManager.getPhoneNumberUtilsAdapter() != null
+                    && callsManager.getPhoneNumberUtilsAdapter().isPotentialLocalEmergencyNumber(context, uriString);
+            if (Intent.ACTION_CALL.equals(intent.getAction()) && !isPrivilegedDialer && isPotentialEmergencyNumber) {
+                Intent systemDialerIntent = new Intent();
+                final Resources resources = context.getResources();
+                systemDialerIntent.setClassName(
+                        resources.getString(R.string.ui_default_package),
+                        resources.getString(R.string.dialer_default_class));
+                systemDialerIntent.setAction(Intent.ACTION_DIAL);
+                systemDialerIntent.setData(handle);
+                systemDialerIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivityAsUser(systemDialerIntent, UserHandle.CURRENT);
+                return;
+            }
+        }
+        /* @} */
 
         // Send to CallsManager to ensure the InCallUI gets kicked off before the broadcast returns
         CompletableFuture<Call> callFuture = callsManager

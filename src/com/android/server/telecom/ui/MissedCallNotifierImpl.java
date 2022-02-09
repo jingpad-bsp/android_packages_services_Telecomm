@@ -17,6 +17,7 @@
 package com.android.server.telecom.ui;
 
 import static android.Manifest.permission.READ_PHONE_STATE;
+import static android.provider.Settings.System.NOTIFICATION_LIGHT_PULSE;
 
 import android.annotation.NonNull;
 import android.content.ContentProvider;
@@ -54,6 +55,7 @@ import android.os.AsyncTask;
 import android.os.Binder;
 import android.os.UserHandle;
 import android.provider.CallLog.Calls;
+import android.provider.Settings;
 import android.telecom.Log;
 import android.telecom.PhoneAccount;
 import android.telephony.PhoneNumberUtils;
@@ -61,9 +63,10 @@ import android.telephony.TelephonyManager;
 import android.text.BidiFormatter;
 import android.text.TextDirectionHeuristics;
 import android.text.TextUtils;
+import android.graphics.Color;
 
 import com.android.internal.telephony.CallerInfo;
-
+import com.unisoc.server.telecom.TelecomUtils;
 import java.lang.Override;
 import java.lang.String;
 import java.util.ArrayList;
@@ -73,6 +76,15 @@ import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
+
+/* Add for Bug1173126 @{ */
+import java.util.Set;
+import java.util.Iterator;
+import android.util.ArraySet;
+import android.content.BroadcastReceiver;
+import android.content.IntentFilter;
+import android.os.LedManager;
+/*@}*/
 
 // TODO: Needed for move to system service: import com.android.internal.R;
 
@@ -121,6 +133,8 @@ public class MissedCallNotifierImpl extends CallsManagerListenerBase implements 
     public static final int CALL_LOG_COLUMN_DATE = 3;
     public static final int CALL_LOG_COLUMN_DURATION = 4;
     public static final int CALL_LOG_COLUMN_TYPE = 5;
+    // UNISOC Feature Porting: show main/vice card feature.
+    public static final String MAIN_VICE_INFO = "main_vice_info";
 
     private static final int MISSED_CALL_NOTIFICATION_ID = 1;
     private static final String NOTIFICATION_TAG = MissedCallNotifierImpl.class.getSimpleName();
@@ -132,10 +146,43 @@ public class MissedCallNotifierImpl extends CallsManagerListenerBase implements 
     private final DefaultDialerCache mDefaultDialerCache;
     private UserHandle mCurrentUserHandle;
 
+    private LedManager mLedManager;
+
+    /* Unisoc FL0108020007: missed call notification RGB light feature. @{ */
+    public static final int LED_ARGB = Color.BLUE;
+    public static final int LED_ON_MS = 1500;
+    public static final int LED_OFF_MS = 2500;
+    /* @} */
+    //  UNISOC: add for bug1168569
+    private static final int MAX_MISSED_CALL_COUNTS = 10;
     // Used to track the number of missed calls.
     private ConcurrentMap<UserHandle, AtomicInteger> mMissedCallCounts;
 
     private List<UserHandle> mUsersToLoadAfterBootComplete = new ArrayList<>();
+
+    /* Add for Bug1173126 @{ */
+    private Set<UserHandle> mLedUserHandles;
+    private final BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            switch (intent.getAction()) {
+                case Intent.ACTION_SCREEN_OFF:
+                    UserHandle userHandle = null;
+                    if(isNeedFlash()) {
+                        final Iterator<UserHandle> iterator = mLedUserHandles.iterator();
+                        while (iterator.hasNext()) {
+                            userHandle = iterator.next();
+                            break;
+                        }
+                        if(userHandle != null) {
+                            showLedFlashNotification(userHandle);
+                        }
+                    }
+                    break;
+            }
+        }
+    };
+    /*@}*/
 
     public MissedCallNotifierImpl(Context context, PhoneAccountRegistrar phoneAccountRegistrar,
             DefaultDialerCache defaultDialerCache) {
@@ -155,6 +202,14 @@ public class MissedCallNotifierImpl extends CallsManagerListenerBase implements 
 
         mNotificationBuilderFactory = notificationBuilderFactory;
         mMissedCallCounts = new ConcurrentHashMap<>();
+
+        /* Add for Bug1173126 @{ */
+        mLedUserHandles = new ArraySet<>();
+        final IntentFilter filter = new IntentFilter();
+        filter.addAction(Intent.ACTION_SCREEN_OFF);
+        mContext.registerReceiver(mBroadcastReceiver, filter);
+        mLedManager = (LedManager)mContext.getSystemService("ledsrv");
+        /*@}*/
     }
 
     /** Clears missed call notification and marks the call log's missed calls as read. */
@@ -225,10 +280,18 @@ public class MissedCallNotifierImpl extends CallsManagerListenerBase implements 
         return receivers.size() > 0;
     }
 
-    private void sendNotificationThroughDefaultDialer(CallInfo callInfo, UserHandle userHandle) {
+    private void sendNotificationThroughDefaultDialer(CallInfo callInfo, UserHandle userHandle,String subText) {
         int count = mMissedCallCounts.get(userHandle).get();
+        /*  UNISOC: add for bug1168569 @{ */
+        if (count > MAX_MISSED_CALL_COUNTS) {
+            Log.i(this, "not send notification to dialer when count > 10.");
+            return;
+        }
+        /* @} */
+
         Intent intent = getShowMissedCallIntentForDefaultDialer(userHandle)
             .setFlags(Intent.FLAG_RECEIVER_FOREGROUND)
+            .putExtra(MAIN_VICE_INFO, subText)// UNISOC Feature Porting: show main/vice card feature
             .putExtra(TelecomManager.EXTRA_CLEAR_MISSED_CALLS_INTENT,
                     createClearMissedCallsPendingIntent(userHandle))
             .putExtra(TelecomManager.EXTRA_NOTIFICATION_COUNT, count)
@@ -246,6 +309,15 @@ public class MissedCallNotifierImpl extends CallsManagerListenerBase implements 
             }
         }
 
+        /* Add for Bug1173126 @{ */
+        if(count >= 1) {
+            if (!mLedUserHandles.contains(userHandle)) {
+                mLedUserHandles.add(userHandle);
+            }
+        } else {
+            cancelLedFlashNotification(userHandle);
+        }
+        /*@}*/
 
         Log.w(this, "Showing missed calls through default dialer.");
         mContext.sendBroadcastAsUser(intent, userHandle, READ_PHONE_STATE);
@@ -271,13 +343,56 @@ public class MissedCallNotifierImpl extends CallsManagerListenerBase implements 
         showMissedCallNotification(callInfo, userHandle);
     }
 
+    /* Add for Bug1173126 @{ */
+    private void showLedFlashNotification(UserHandle userHandle) {
+        mLedManager.setNotificationLightFlashing(true, LED_ARGB, LED_ON_MS, LED_OFF_MS);
+    }
+
+    private void cancelLedFlashNotification(UserHandle userHandle) {
+        Log.i(this, "cancel Led flash notification");
+        mLedManager.setNotificationLightFlashing(false, LED_ARGB, LED_ON_MS, LED_OFF_MS);
+
+        if (mLedUserHandles.contains(userHandle)) {
+            mLedUserHandles.remove(userHandle);
+        }
+    }
+
+    private boolean isNeedFlash() {
+        boolean isNeedFlash = false;
+        if (mLedUserHandles == null || mLedUserHandles.isEmpty()
+            || (Settings.System.getInt(mContext.getContentResolver(),
+                NOTIFICATION_LIGHT_PULSE, 0) == 0)) {
+            return false;
+        }
+
+        final Iterator<UserHandle> iterator = mLedUserHandles.iterator();
+        while (iterator.hasNext()) {
+            UserHandle userHandle = iterator.next();
+            if (mMissedCallCounts.get(userHandle) == null) {//add for bug1233303
+                break;
+            }
+            int count = mMissedCallCounts.get(userHandle).get();
+            if(count > 0) {
+                isNeedFlash = true;
+                break;
+            }
+        }
+        return isNeedFlash;
+    }
+    /*@}*/
+
     private void showMissedCallNotification(@NonNull CallInfo callInfo, UserHandle userHandle) {
         Log.i(this, "showMissedCallNotification: userHandle=%d", userHandle.getIdentifier());
         mMissedCallCounts.putIfAbsent(userHandle, new AtomicInteger(0));
         int missCallCounts = mMissedCallCounts.get(userHandle).incrementAndGet();
 
+        // UNISOC Feature Porting: show main/vice card feature.
+        final String subText = TelecomUtils
+	          .getSlotInfoByPhoneAccountHandle(mContext, callInfo.getPhoneAccountHandle())
+                  + TelecomUtils.getPhoneAccountLabel(callInfo.getPhoneAccountHandle(),mContext);
         if (shouldManageNotificationThroughDefaultDialer(userHandle)) {
-            sendNotificationThroughDefaultDialer(callInfo, userHandle);
+            // UNISOC Feature Porting: show main/vice card feature.
+            sendNotificationThroughDefaultDialer(callInfo, userHandle, subText);
             return;
         }
 
@@ -394,7 +509,7 @@ public class MissedCallNotifierImpl extends CallsManagerListenerBase implements 
         mMissedCallCounts.get(userHandle).set(0);
 
         if (shouldManageNotificationThroughDefaultDialer(userHandle)) {
-            sendNotificationThroughDefaultDialer(null, userHandle);
+            sendNotificationThroughDefaultDialer(null, userHandle,"");
             return;
         }
 
@@ -526,7 +641,13 @@ public class MissedCallNotifierImpl extends CallsManagerListenerBase implements 
      */
     private void configureLedOnNotification(Notification notification) {
         notification.flags |= Notification.FLAG_SHOW_LIGHTS;
-        notification.defaults |= Notification.DEFAULT_LIGHTS;
+        /* Unisoc FL0108020007: missed call notification RGB light feature. @{*/
+        //notification.defaults |= Notification.DEFAULT_LIGHTS;
+        notification.defaults |= Notification.DEFAULT_SOUND;
+        notification.ledARGB = LED_ARGB;
+        notification.ledOnMS = LED_ON_MS;
+        notification.ledOffMS = LED_OFF_MS;
+        /* @} */
     }
 
     private boolean canRespondViaSms(@NonNull CallInfo callInfo) {

@@ -88,7 +88,23 @@
             android:usesCleartextTraffic="false"
             android:defaultToDeviceProtectedStorage="true"
             android:directBootAware="true">
-
+        <!-- UNISOC Feature Porting:
+             Activity that displays UI for managing the function of flipping to silence calls. @{-->
+        <activity android:name="com.unisoc.server.settings.TelecommCallSettings"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:theme="@style/Theme.Telecom.BlockedNumbers"
+            android:process=":ui"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.telecom.action.SILENT_CALL_BY_FILPING" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.telecom.action.FADE_IN_RINGER" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <!-- @} -->
         <!-- CALL vs CALL_PRIVILEGED vs CALL_EMERGENCY
              We have three different intents through which a call can be initiated each with its
              own behavior.

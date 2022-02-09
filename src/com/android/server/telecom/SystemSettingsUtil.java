@@ -54,6 +54,13 @@ public class SystemSettingsUtil {
                 Settings.System.VIBRATE_WHEN_RINGING, 0) != 0;
     }
 
+    /* Unisoc FL0108020016: MaxRingingVolume and Vibrate. @{ */
+    public void setVibrateWhenRinging(Context context, int isVibrate) {
+        Settings.System.putInt(context.getContentResolver(),
+                Settings.System.VIBRATE_WHEN_RINGING, isVibrate);
+    }
+    /* @} */
+
     public boolean isEnhancedCallBlockingEnabled(Context context) {
         return Settings.System.getInt(context.getContentResolver(),
                 Settings.System.DEBUG_ENABLE_ENHANCED_CALL_BLOCKING, 0) != 0;

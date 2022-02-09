@@ -312,7 +312,7 @@ public class CallsManagerTest extends TelecomTestCase {
     public void testFindOutgoingCallPhoneAccountSelfManaged() throws Exception {
         setupCallerInfoLookupHelper();
         List<PhoneAccountHandle> accounts = mCallsManager.findOutgoingCallPhoneAccount(
-                SELF_MANAGED_HANDLE, TEST_ADDRESS, false /* isVideo */, null /* userHandle */)
+                SELF_MANAGED_HANDLE, TEST_ADDRESS, false /* isVideo */, null /* userHandle */, null/* extras */)
                 .get();
         assertEquals(1, accounts.size());
         assertEquals(SELF_MANAGED_HANDLE, accounts.get(0));
@@ -334,7 +334,7 @@ public class CallsManagerTest extends TelecomTestCase {
                 new ArrayList<>(Arrays.asList(SIM_1_HANDLE, SIM_2_HANDLE)));
 
         List<PhoneAccountHandle> accounts = mCallsManager.findOutgoingCallPhoneAccount(
-                null /* phoneAcct */, TEST_ADDRESS, false /* isVideo */, null /* userHandle */)
+                null /* phoneAcct */, TEST_ADDRESS, false /* isVideo */, null /* userHandle */, null/* extras */)
                 .get();
 
         // Should have found just the default.
@@ -358,7 +358,7 @@ public class CallsManagerTest extends TelecomTestCase {
                 new ArrayList<>(Arrays.asList(SIM_1_HANDLE, SIM_2_HANDLE)));
 
         List<PhoneAccountHandle> accounts = mCallsManager.findOutgoingCallPhoneAccount(
-                null /* phoneAcct */, TEST_ADDRESS, false /* isVideo */, null /* userHandle */)
+                null /* phoneAcct */, TEST_ADDRESS, false /* isVideo */, null /* userHandle */, null/* extras */)
                 .get();
 
         assertEquals(2, accounts.size());
@@ -382,7 +382,7 @@ public class CallsManagerTest extends TelecomTestCase {
                 new ArrayList<>(Arrays.asList(SIM_2_HANDLE)));
 
         List<PhoneAccountHandle> accounts = mCallsManager.findOutgoingCallPhoneAccount(
-                null /* phoneAcct */, TEST_ADDRESS, true /* isVideo */, null /* userHandle */)
+                null /* phoneAcct */, TEST_ADDRESS, true /* isVideo */, null /* userHandle */, null/* extras */)
                 .get();
 
         assertEquals(1, accounts.size());
@@ -409,7 +409,7 @@ public class CallsManagerTest extends TelecomTestCase {
                 any(), eq(0 /* none specified */))).thenReturn(
                 new ArrayList<>(Arrays.asList(SIM_1_HANDLE)));
         List<PhoneAccountHandle> accounts = mCallsManager.findOutgoingCallPhoneAccount(
-                null /* phoneAcct */, TEST_ADDRESS, true /* isVideo */, null /* userHandle */)
+                null /* phoneAcct */, TEST_ADDRESS, true /* isVideo */, null /* userHandle */, null/* extras */)
                 .get();
 
         // Should have found one.
@@ -432,7 +432,7 @@ public class CallsManagerTest extends TelecomTestCase {
                 new ArrayList<>(Arrays.asList(SIM_1_HANDLE, SIM_2_HANDLE)));
 
         List<PhoneAccountHandle> accounts = mCallsManager.findOutgoingCallPhoneAccount(
-                SIM_2_HANDLE, TEST_ADDRESS, false /* isVideo */, null /* userHandle */).get();
+                SIM_2_HANDLE, TEST_ADDRESS, false /* isVideo */, null /* userHandle */, null/* extras */).get();
 
         assertEquals(1, accounts.size());
         assertTrue(accounts.contains(SIM_2_HANDLE));
@@ -453,7 +453,7 @@ public class CallsManagerTest extends TelecomTestCase {
                 new ArrayList<>(Arrays.asList(SIM_1_HANDLE, SIM_2_HANDLE)));
 
         List<PhoneAccountHandle> accounts = mCallsManager.findOutgoingCallPhoneAccount(
-                null, TEST_ADDRESS2, false /* isVideo */, Process.myUserHandle()).get();
+                null, TEST_ADDRESS2, false /* isVideo */, Process.myUserHandle(), null/* extras */).get();
 
         assertEquals(1, accounts.size());
         assertTrue(accounts.contains(SIM_1_HANDLE));

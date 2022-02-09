@@ -36,7 +36,7 @@
     <string name="respond_via_sms_setting_title_2" msgid="6104662227299493906">"修改快速回复"</string>
     <string name="respond_via_sms_setting_summary" msgid="9150281183930613065"></string>
     <string name="respond_via_sms_edittext_dialog_title" msgid="20379890418289778">"快速回复"</string>
-    <string name="respond_via_sms_confirmation_format" msgid="7229149977515784269">"讯息已发送至 <xliff:g id="PHONE_NUMBER">%s</xliff:g>。"</string>
+    <string name="respond_via_sms_confirmation_format" msgid="7229149977515784269">"信息已发送至 <xliff:g id="PHONE_NUMBER">%s</xliff:g>。"</string>
     <string name="respond_via_sms_failure_format" msgid="90791421289769504">"未能将信息发送到 <xliff:g id="PHONE_NUMBER">%s</xliff:g>。"</string>
     <string name="enable_account_preference_title" msgid="2021848090086481720">"通话帐号"</string>
     <string name="outgoing_call_not_allowed_user_restriction" msgid="6872406278300131364">"只能拨打紧急呼救电话。"</string>
@@ -109,4 +109,19 @@
     <string name="phone_strings_emergency_call_made_dialog_title_txt" msgid="7421611725400166580">"已拨打紧急呼救电话"</string>
     <string name="phone_strings_emergency_call_made_dialog_call_blocking_text_txt" msgid="4083285098613193052">"系统已停用来电屏蔽功能，以便急救人员与您联系。"</string>
     <string name="developer_title" msgid="1816273446906554627">"电信开发者菜单"</string>
+    <!-- UNISOC Feature Porting: show main/vice card feature @{ -->
+    <string name="main_card_slot">"主卡: "</string>
+    <string name="vice_card_slot">"副卡: "</string>
+    <!-- @} -->
+    <!-- UNISOC Feature Porting: Flip to silence from incoming calls. @{-->
+    <string name="incomingcall_flipping_silence_title">"翻转静音"</string>
+    <string name="flipping_summary">"来电时翻转手机可以静音"</string>
+    <!-- @} -->
+    <!-- UNISOC Feature Porting: Fade in ringer volume when incoming calls. @{ -->
+    <string name="fade_in_title">"铃声渐进播放"</string>
+    <string name="fade_in_summary">"功能开启时, 来电铃声将会逐渐增大播放"</string>
+    <!-- @} -->
+    <!-- UNISOC:add for bug1381939 -->
+    <string name="forbidden_invite_call_message">"会议电话处于保持状态，不允许邀请电话"</string>
+    <!-- @} -->
 </resources>

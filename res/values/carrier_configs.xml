@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<resources>
+  <!-- Unisoc FL0108020025: Show Rejected calls notifier feature. -->
+  <bool name="config_is_show_reject_call_notifier" targetCarriers="cucc,cmcc">false</bool>
+  <!-- Unisoc FL1000060380: Low power notificiation. -->
+  <bool name="config_show_low_battery_dialog" targetCarriers="reliance,telcel">false</bool>
+  <!-- Unisoc FL1000060331: Wake up screen when call disconnected. -->
+  <bool name="config_is_support_wakeup_screen" targetCarriers="reliance,telcel">false</bool>
+  <!-- Unisoc FL1000060554: Volte Local Tone Feature. -->
+  <bool name="config_is_support_local_tone" targetCarriers="telcel">false</bool>
+  <!-- Unisoc Feature Porting: EE unhold call when remote disconnected active call. -->
+  <bool name="config_unhold_call" targetCarriers="ee">false</bool>
+  <bool name="config_is_support_dtmf_tone" targetCarriers="telcel">false</bool>
+  <!--UNISCOC:modify for bug1152781-->
+  <bool name="config_is_close_auto_speaker" targetCarriers="cmcc">false</bool>
+</resources>

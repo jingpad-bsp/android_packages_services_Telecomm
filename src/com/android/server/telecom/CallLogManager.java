@@ -36,8 +36,15 @@ import android.telecom.PhoneAccount;
 import android.telecom.PhoneAccountHandle;
 import android.telecom.VideoProfile;
 import android.telephony.CarrierConfigManager;
+import android.telephony.CarrierConfigManagerEx;
 import android.telephony.PhoneNumberUtils;
+import com.unisoc.server.telecom.TelecomUtils;
 import android.telephony.SubscriptionManager;
+import android.text.TextUtils;
+//follow bug1068889
+import android.telecom.Connection;
+import android.telecom.TelecomManager;
+import com.android.internal.telephony.PhoneConstants;
 
 // TODO: Needed for move to system service: import com.android.internal.R;
 import com.android.internal.annotations.VisibleForTesting;
@@ -142,6 +149,8 @@ public final class CallLogManager extends CallsManagerListenerBase {
                 "android.permission.PROCESS_CALLLOG_INFO";
     private static final String CALL_TYPE = "callType";
     private static final String CALL_DURATION = "duration";
+    private static final String REASON_CALL_END_IMS_MERGED_SUCCESSFULLY =
+              "Call ended during conference merge process., IMS_MERGED_SUCCESSFULLY";
 
     private Object mLock;
     private String mCurrentCountryIso;
@@ -205,6 +214,13 @@ public final class CallLogManager extends CallsManagerListenerBase {
         if (oldState == CallState.SELECT_PHONE_ACCOUNT) {
             return false;
         }
+            // UNISOC: add for log mt conference call log 1158477
+            if (call.isConference() && (call.getConnectionProperties() & Connection.PROPERTY_IS_MT_CONFERENCE_CALL) == Connection.PROPERTY_IS_MT_CONFERENCE_CALL
+                    && (call.getConnectionCapabilities() & Connection.CAPABILITY_CONFERENCE_HAS_NO_CHILDREN) == Connection.CAPABILITY_CONFERENCE_HAS_NO_CHILDREN
+                    && !((call.getConnectionCapabilities() & Connection.CAPABILITY_MANAGE_CONFERENCE) == Connection.CAPABILITY_MANAGE_CONFERENCE)) {
+                Log.d(TAG, "shouldLogDisconnectedCall, log mt conference call log.");
+                return true;
+            }
         // A conference call which had children should not be logged, unless it was remotely hosted.
         if (call.isConference() && call.hadChildren() &&
                 !call.hasProperty(Connection.PROPERTY_REMOTELY_HOSTED)) {
@@ -256,6 +272,23 @@ public final class CallLogManager extends CallsManagerListenerBase {
             }
         }
 
+         //add for bug 1343969
+        if (cause != null && REASON_CALL_END_IMS_MERGED_SUCCESSFULLY.equals(cause.getReason())) {
+            return  false;
+        }
+
+        // UNISOC: add for ims not log answer elsewhere call feature
+        int subId = mPhoneAccountRegistrar
+                    .getSubscriptionIdForPhoneAccount(call.getTargetPhoneAccount());
+        PersistableBundle bundle = mCarrierConfigManager.getConfigForSubId(subId);
+        if (bundle != null && cause != null) {
+            boolean isAnsweredElsewhere = (cause.getCode() == DisconnectCause.ANSWERED_ELSEWHERE);
+            if (isAnsweredElsewhere && !(bundle.getBoolean(CarrierConfigManagerEx.
+                          KEY_IMS_LOG_ANSWER_ELSEWHERE_CALL, true))) {
+                return false;
+            }
+        }
+
         boolean shouldCallSelfManagedLogged = call.isLoggedSelfManaged()
                 && (call.getHandoverState() == HandoverState.HANDOVER_NONE
                 || call.getHandoverState() == HandoverState.HANDOVER_COMPLETE);
@@ -269,6 +302,16 @@ public final class CallLogManager extends CallsManagerListenerBase {
         if ((type == Calls.MISSED_TYPE || type == Calls.BLOCKED_TYPE) &&
                 showNotificationForMissedCall) {
             logCall(call, type, new LogCallCompletedListener() {
+                @Override
+                public void onLogCompleted(@Nullable Uri uri) {
+                    mMissedCallNotifier.showMissedCallNotification(
+                            new MissedCallNotifier.CallInfo(call));
+                }
+            }, result);
+        // Unisoc FL0108020025: Show Rejected calls notifier feature.
+        } else if (type == Calls.REJECTED_TYPE &&
+                    TelecomUtils.isSupportShowRejectCallNotifier(mContext)) {
+            logCall(call, Calls.MISSED_TYPE, new LogCallCompletedListener() {
                 @Override
                 public void onLogCompleted(@Nullable Uri uri) {
                     mMissedCallNotifier.showMissedCallNotification(
@@ -302,6 +345,13 @@ public final class CallLogManager extends CallsManagerListenerBase {
 
         Log.d(TAG, "logNumber set to: %s", Log.pii(logNumber));
 
+        /* UNISOC: add for bug1131811 @{ */
+        if (TextUtils.isEmpty(logNumber) && callLogType == Calls.OUTGOING_TYPE) {
+            Log.d(TAG, "do not log the outgoing call which number is empty");
+            return;
+        }
+        /* @} */
+
         final PhoneAccountHandle emergencyAccountHandle =
                 TelephonyUtil.getDefaultEmergencyPhoneAccount().getAccountHandle();
 
@@ -320,10 +370,25 @@ public final class CallLogManager extends CallsManagerListenerBase {
 
         int callFeatures = getCallFeatures(call.getVideoStateHistory(),
                 call.getDisconnectCause().getCode() == DisconnectCause.CALL_PULLED,
+                //Unisoc : FL0108040015 add VoWiFi CallLog icon.
+                (call.getConnectionProperties() & Connection.PROPERTY_WIFI) ==
+                        Connection.PROPERTY_WIFI,
                 shouldSaveHdInfo(call, accountHandle),
                 (call.getConnectionProperties() & Connection.PROPERTY_ASSISTED_DIALING_USED) ==
                         Connection.PROPERTY_ASSISTED_DIALING_USED,
                 call.wasEverRttCall());
+
+        //UNISOC:add for bug1165473.Follow Bug 698812 && 920819, add For VOLTE and VoWiFi CallLog icon.
+        int extraFeature = 0;
+        if (call.hasProperty(Connection.PROPERTY_WIFI)) {
+            extraFeature = Calls.FEATURES_WIFI;
+        } else if (call.hasProperty(Connection.PROPERTY_HIGH_DEF_AUDIO)) {
+            extraFeature = Calls.FEATURES_HD_CALL;
+        }  else {
+            extraFeature = 0;
+        }
+        callFeatures = callFeatures | extraFeature;
+        Log.d(TAG, "callFeatures: " + callFeatures);
 
         if (callLogType == Calls.BLOCKED_TYPE) {
             logCall(call.getCallerInfo(), logNumber, call.getPostDialDigits(), formattedViaNumber,
@@ -387,21 +452,27 @@ public final class CallLogManager extends CallsManagerListenerBase {
         // emergency calls to the Call Log.  (This behavior is set on a per-product basis, based
         // on carrier requirements.)
         boolean okToLogEmergencyNumber = false;
+        // UNISOC: modify for feature FL1000062509
         CarrierConfigManager configManager = (CarrierConfigManager) mContext.getSystemService(
                 Context.CARRIER_CONFIG_SERVICE);
         PersistableBundle configBundle = configManager.getConfigForSubId(
                 mPhoneAccountRegistrar.getSubscriptionIdForPhoneAccount(accountHandle));
-        if (configBundle != null) {
+        /*if (configBundle != null) {
             okToLogEmergencyNumber = configBundle.getBoolean(
                     CarrierConfigManager.KEY_ALLOW_EMERGENCY_NUMBERS_IN_CALL_LOG_BOOL);
-        }
+        }*/
+        okToLogEmergencyNumber = mContext.getResources()
+                .getBoolean(R.bool.allow_emergency_numbers_in_call_log);
 
         // Don't log emergency numbers if the device doesn't allow it.
-        final boolean isOkToLogThisCall = (!isEmergency || okToLogEmergencyNumber)
-                && !isUnloggableNumber(number, configBundle);
-
+        //UNISOC: add for bug1172559
+        final boolean isOkToLogThisCall = (isEmergency && okToLogEmergencyNumber)
+                || ((!isEmergency || okToLogEmergencyNumber)
+                && !isUnloggableNumber(number, configBundle)
+                // UNISOC: add for bug1139304
+                && !isPotentialMMICode(number));
         sendAddCallBroadcast(callType, duration);
-
+        Log.i(TAG, "isEmergency:"+isEmergency+","+"okToLogEmergencyNumber:"+okToLogEmergencyNumber);
         if (isOkToLogThisCall) {
             Log.d(TAG, "Logging Call log entry: " + callerInfo + ", "
                     + Log.pii(number) + "," + presentation + ", " + callType
@@ -442,18 +513,23 @@ public final class CallLogManager extends CallsManagerListenerBase {
      *
      * @param videoState The video state.
      * @param isPulledCall {@code true} if this call was pulled to another device.
+     * @param isWifiCall {@code true} id this call was used vowifi
      * @param isStoreHd {@code true} if this call was used HD.
      * @param isUsingAssistedDialing {@code true} if this call used assisted dialing.
      * @return The call features.
      */
-    private static int getCallFeatures(int videoState, boolean isPulledCall, boolean isStoreHd,
-            boolean isUsingAssistedDialing, boolean isRtt) {
+    private static int getCallFeatures(int videoState, boolean isPulledCall, boolean isWifiCall,
+            boolean isStoreHd, boolean isUsingAssistedDialing, boolean isRtt) {
         int features = 0;
         if (VideoProfile.isVideo(videoState)) {
             features |= Calls.FEATURES_VIDEO;
         }
         if (isPulledCall) {
             features |= Calls.FEATURES_PULLED_EXTERNALLY;
+        }
+        //Unisoc : FL0108040015 add VoWiFi CallLog icon.
+        if (isWifiCall) {
+            features |= Calls.FEATURES_WIFI;
         }
         if (isStoreHd) {
             features |= Calls.FEATURES_HD_CALL;
@@ -480,6 +556,13 @@ public final class CallLogManager extends CallsManagerListenerBase {
                 && call.wasHighDefAudio()) {
             return true;
         }
+        // UNISOC:follow bug1068889 modify for bug1218200  Coverity代码扫描 -CID:{238664}
+        if (mContext.getResources().getBoolean(R.bool.config_is_show_ims_icon_in_calllog)
+                && call.getExtras() != null
+                && !call.hasProperty(Connection.PROPERTY_WIFI)
+                && call.getExtras().getInt(TelecomManager.EXTRA_CALL_TECHNOLOGY_TYPE) == PhoneConstants.PHONE_TYPE_IMS) {
+            return true;
+        }
         return false;
     }
 
@@ -500,6 +583,10 @@ public final class CallLogManager extends CallsManagerListenerBase {
         String handleString = handle.getSchemeSpecificPart();
         if (!PhoneNumberUtils.isUriNumber(handleString)) {
             handleString = PhoneNumberUtils.stripSeparators(handleString);
+        }
+        //modify for bug1413711
+        if (handleString != null && handleString.startsWith("+86400")) {
+            handleString = handleString.substring(3);
         }
         return handleString;
     }
@@ -616,6 +703,29 @@ public final class CallLogManager extends CallsManagerListenerBase {
 
         return country.getCountryIso();
     }
+    /* UNISOC: add for bug1139304 @{ */
+    private boolean isPotentialMMICode(String dialedNumber) {
+        if (dialedNumber == null) {
+            return false;
+        }
+
+        //Bug 904789 : The function of String.charAt(0) make exception if dialedNumber's length is equal to 0.
+        if(dialedNumber.length() == 0) {
+            return false;
+        }
+
+        // Add for Bug1016075
+        if (dialedNumber.endsWith("#")) {
+            return true;
+        }
+        if (dialedNumber.length() <= 2) {
+            if (dialedNumber.length() == 1 || dialedNumber.charAt(0) != '1') {
+                return true;
+            }
+        }
+        return false;
+    }
+    /* @} */
 
     /**
      * Get the current country code

@@ -26,15 +26,18 @@ import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.UserInfo;
+import android.database.ContentObserver;
 import android.media.AudioManager;
 import android.media.AudioSystem;
 import android.media.ToneGenerator;
 import android.media.MediaPlayer;
 import android.net.Uri;
+import android.os.AsyncResult;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Message;
 import android.os.Process;
 import android.os.SystemClock;
 import android.os.SystemProperties;
@@ -61,10 +64,14 @@ import android.telecom.PhoneAccountSuggestion;
 import android.telecom.TelecomManager;
 import android.telecom.VideoProfile;
 import android.telephony.CarrierConfigManager;
+import android.telephony.CarrierConfigManagerEx;
 import android.telephony.PhoneNumberUtils;
 import android.telephony.TelephonyManager;
+import android.telephony.TelephonyManagerEx;
 import android.text.TextUtils;
 import android.util.Pair;
+import android.view.WindowManager;
+import android.widget.Toast;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.AsyncEmergencyContactNotifier;
@@ -89,6 +96,31 @@ import com.android.server.telecom.ui.CallRedirectionTimeoutDialogActivity;
 import com.android.server.telecom.ui.ConfirmCallDialogActivity;
 import com.android.server.telecom.ui.IncomingCallNotifier;
 
+// Unisoc FL0108060002: CallFireWall
+import com.unisoc.server.telecom.BlockIncomingCallNotifierUtils;
+// Unisoc FL0108020017: Pick up the phone to answer incoming call.
+import com.unisoc.server.telecom.sensor.PickUpToAnswerIncomingCall;
+// Unisoc FL0108020016: MaxRingingVolume and Vibrate.
+import com.unisoc.server.telecom.sensor.MaxRingingVolumeAndVibrate;
+// Unisoc FL0108020014: Flip to mute for incoming call.
+import com.unisoc.server.telecom.sensor.FlipToMute;
+// Unisoc FL0108020015: Fade down ringtone to vibrate.
+import com.unisoc.server.telecom.sensor.FadeDownRingtoneToVibrate;
+// Unisoc FL0108020011: screen off after call is active for 5s
+import com.unisoc.server.telecom.InCallScreenOffControllerEx;
+// Unisoc FL1000060331: Wake up screen when call disconnected.
+import com.unisoc.server.plugins.WakeupScreen.WakeupScreenHelper;
+// Unisoc FL1000060554: Volte Local Tone Feature.
+import com.unisoc.server.plugins.LocalTone.LocalToneHelper;
+// Unisoc FL1000060389: Show Rejected calls notifier feature.
+import com.unisoc.server.telecom.TelecomCmccHelper;
+// Unisoc FL1000062187: Local RingBackTone Feature.
+import com.unisoc.server.telecom.RingBackTone;
+// UNISOC Feature Porting: Support Telcel Operator requirement.
+import com.unisoc.server.plugins.TelcelCallWaitingTone.TelcelCallWaitingToneHelper;
+
+import com.unisoc.server.telecom.TelecomUtils;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -108,7 +140,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
-
+import com.android.server.telecom.InCallAccelerometerSensorControllerEx;
 /**
  * Singleton.
  *
@@ -185,6 +217,9 @@ public class CallsManager extends Call.ListenerBase
     private static final int MAXIMUM_OUTGOING_CALLS = 1;
     private static final int MAXIMUM_TOP_LEVEL_CALLS = 2;
     private static final int MAXIMUM_SELF_MANAGED_CALLS = 10;
+    //Unisoc FL1000060551: auto answer call for CMCC.
+    private static final int AUTO_ANSWER_CALL_DISABLE = 0;
+    private static final int AUTO_ANSWER_CALL_ENABLE = 1;
 
     private static final int[] OUTGOING_CALL_STATES =
             {CallState.CONNECTING, CallState.SELECT_PHONE_ACCOUNT, CallState.DIALING,
@@ -323,6 +358,12 @@ public class CallsManager extends Call.ListenerBase
     private final Handler mHandler = new Handler(Looper.getMainLooper());
     private final EmergencyCallHelper mEmergencyCallHelper;
     private final RoleManagerAdapter mRoleManagerAdapter;
+    //UNISOC:add for bug1192597
+    private boolean isSessionModifyOnRequest = false;
+    private boolean isPlayVideoUpgradeWattingToneDone = false;
+    //UNISOC:add for bug1381939
+    private static InviteHandler mInviteHandler;
+    private static final int EVENT_INVITE_CALL_NOT_ALLOWED = 1;
 
     private final ConnectionServiceFocusManager.CallsManagerRequester mRequester =
             new ConnectionServiceFocusManager.CallsManagerRequester() {
@@ -347,6 +388,14 @@ public class CallsManager extends Call.ListenerBase
 
     private Runnable mStopTone;
 
+    // UNISOC Feature Porting: Support Telcel Operator requirement.
+    private TelcelCallWaitingToneHelper mTelcelCallWaitingToneHelper;
+
+    //unisoc bug1110209 back to headphone after cbfs
+    private boolean mInVideoMode = false;
+
+    boolean isConferenceDial;
+    private String[] callees;
     /**
      * Listener to PhoneAccountRegistrar events.
      */
@@ -377,12 +426,18 @@ public class CallsManager extends Call.ListenerBase
     private final BroadcastReceiver mReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            Log.startSession("CM.CCCR");
             String action = intent.getAction();
             if (CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED.equals(action)
                     || SystemContract.ACTION_BLOCK_SUPPRESSION_STATE_CHANGED.equals(action)) {
+                Log.startSession("CM.CCCR");
                 new UpdateEmergencyCallNotificationTask().doInBackground(
                         Pair.create(context, Log.createSubsession()));
+            } else if (Intent.ACTION_USER_SWITCHED.equals(action)) { //UNISOC: add for bug1206442
+                Call selectPhoneAccountCall = getFirstCallWithState(CallState.SELECT_PHONE_ACCOUNT);
+                if (selectPhoneAccountCall != null) {
+                    Log.i(this, "ACTION_USER_SWITCHED onReceive disconnect the select phone account call:"+selectPhoneAccountCall);
+                    selectPhoneAccountCall.disconnect();
+                }
             }
         }
     };
@@ -400,6 +455,7 @@ public class CallsManager extends Call.ListenerBase
             Context context = args[0].first;
             BlockedNumbersUtil.updateEmergencyCallNotification(context,
                     SystemContract.shouldShowEmergencyCallNotification(context));
+            Log.endSession();
             return null;
         }
     }
@@ -450,7 +506,7 @@ public class CallsManager extends Call.ListenerBase
         mTimeoutsAdapter = timeoutsAdapter;
         mEmergencyCallHelper = emergencyCallHelper;
         mCallerInfoLookupHelper = callerInfoLookupHelper;
-
+        mInviteHandler = new InviteHandler(mContext.getMainLooper());
         mDtmfLocalTonePlayer =
                 new DtmfLocalTonePlayer(new DtmfLocalTonePlayer.ToneGeneratorProxy());
         CallAudioRouteStateMachine callAudioRouteStateMachine =
@@ -509,6 +565,27 @@ public class CallsManager extends Call.ListenerBase
         mInCallWakeLockController = inCallWakeLockControllerFactory.create(context, this);
         mClockProxy = clockProxy;
         mRoleManagerAdapter = roleManagerAdapter;
+        // UNISOC Feature Porting: Support Telcel Operator requirement.
+        mTelcelCallWaitingToneHelper = TelcelCallWaitingToneHelper.getInstance(context);
+
+        // Unisoc FL0108020017: Pick up the phone to answer incoming call.
+        PickUpToAnswerIncomingCall.getInstance(context).init(this);
+        // Unisoc FL0108020016: MaxRingingVolume and Vibrate.
+        MaxRingingVolumeAndVibrate.getInstance(context).init(this, mRinger);
+        // Unisoc FL0108020014: Flip to mute for incoming call.
+        FlipToMute.getInstance(context).init(this,mCallAudioManager);
+        // Unisoc FL0108020015: Fade down ringtone to vibrate.
+        FadeDownRingtoneToVibrate.getInstance(context).init(this, mRinger);
+        // Unisoc FL0108020011: screen off after call is active for 5s
+        InCallScreenOffControllerEx.getInstance().init(mContext, this);
+        // Unisoc FL1000060331: Wake up screen when call disconnected.
+        WakeupScreenHelper.getInstance(context).init(context, this);
+        // Unisoc FL1000060554: Volte Local Tone Feature.
+        LocalToneHelper.getInstance(context).init(context, this);
+        // Unisoc FL1000062187: Local RingBackTone Feature.
+        RingBackTone.getInstance(context).init(context, this);
+        // UNISOC Feature Porting: Flip to silence from incoming calls.
+        InCallAccelerometerSensorControllerEx.getInstance(context).init(context, this, mRinger);//add for bug1154625
 
         mListeners.add(mInCallWakeLockController);
         mListeners.add(statusBarNotifier);
@@ -531,7 +608,25 @@ public class CallsManager extends Call.ListenerBase
         IntentFilter intentFilter = new IntentFilter(
                 CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED);
         intentFilter.addAction(SystemContract.ACTION_BLOCK_SUPPRESSION_STATE_CHANGED);
+        intentFilter.addAction(Intent.ACTION_USER_SWITCHED);  //UNISOC: add for bug1206442
         context.registerReceiver(mReceiver, intentFilter);
+    }
+
+    //UNISOC:add for bug1381939
+    private class InviteHandler extends Handler {
+
+        public InviteHandler(Looper looper) {
+            super(looper);
+        }
+        @Override
+        public void handleMessage(Message msg) {
+            AsyncResult ar = (AsyncResult) msg.obj;
+                switch (msg.what) {
+                    case EVENT_INVITE_CALL_NOT_ALLOWED:
+                        Toast.makeText(mContext, R.string.forbidden_invite_call_message, Toast.LENGTH_LONG).show();
+                        break;
+                }
+            }
     }
 
     public void setIncomingCallNotifier(IncomingCallNotifier incomingCallNotifier) {
@@ -672,12 +767,39 @@ public class CallsManager extends Call.ListenerBase
                 Log.i(this, "onCallFilteringCompleted: setting the call to silent ringing state");
                 incomingCall.setSilentRingingRequested(true);
                 addCall(incomingCall);
+            } else if (TelecomCmccHelper.getInstance(mContext).hangUpIncomingCall(incomingCall, getActiveCall(), getDialingCall())) {
+                // Unisoc porting: Add for CMCC requirement bug693518
+                Log.i(this, "onCallFilteringCompleted: Call rejected! cmcc hangup incoming call");
+                rejectCallAndLog(incomingCall, result);
             } else {
                 addCall(incomingCall);
+                //Unisoc FL1000060551: auto answer call for CMCC.
+                mHandler.postDelayed(new java.lang.Runnable() {
+                    @Override
+                    public void run() {
+                        Log.i(this, "persist.radio.call.autoanswer =" + SystemProperties.getInt(
+                            "persist.radio.call.autoanswer",
+                            AUTO_ANSWER_CALL_DISABLE) + ",hasVideoCall() = " + hasVideoCall()
+                            + ", incomingCall = " + incomingCall);
+                        if (SystemProperties.getInt("persist.radio.call.autoanswer",
+                            AUTO_ANSWER_CALL_DISABLE) == AUTO_ANSWER_CALL_ENABLE
+                                && incomingCall != null
+                                && incomingCall.getState() == CallState.RINGING) {
+                            Log.i(this, "incomingCall.getVideoState() = "
+                                    + incomingCall.getVideoState() + "incomingCall.getState() = "
+                                    + incomingCall.getState());
+                            // UNISOC: modify for bug1172782
+                            answerCall(incomingCall, hasVideoCall() ? incomingCall.getVideoState() :
+                                    VideoProfile.STATE_AUDIO_ONLY);
+                        }
+                    }
+                }, 2000);
             }
         } else {
             if (result.shouldReject) {
                 Log.i(this, "onCallFilteringCompleted: blocked call, rejecting.");
+                // Unisoc FL0108060002: CallFireWall
+                BlockIncomingCallNotifierUtils.getInstance(mContext).blockCall(incomingCall);
                 incomingCall.reject(false, null);
             }
             if (result.shouldAddToCallLog) {
@@ -830,8 +952,13 @@ public class CallsManager extends Call.ListenerBase
     @Override
     public void onVideoStateChanged(Call call, int previousVideoState, int newVideoState) {
         for (CallsManagerListener listener : mListeners) {
-            listener.onVideoStateChanged(call, previousVideoState, newVideoState);
+            listener.onVideoStateChanged(call,
+                    // UNISOC: add for bug1146806
+                    mInVideoMode == VideoProfile.isVideo(newVideoState) ? newVideoState : previousVideoState,
+                    newVideoState);
         }
+        //unisoc bug1110209 back to headphone after cbfs
+        updateVideoMode();
     }
 
     @Override
@@ -884,10 +1011,32 @@ public class CallsManager extends Call.ListenerBase
                 VideoProfile.STATE_AUDIO_ONLY;
         Log.v(TAG, "onSessionModifyRequestReceived : videoProfile = " + VideoProfile
                 .videoStateToString(videoState));
+        //UNISOC:add for bug1192597
+        isSessionModifyOnRequest = true;
 
         for (CallsManagerListener listener : mListeners) {
             listener.onSessionModifyRequestReceived(call, videoProfile);
         }
+    }
+
+    public boolean getSessionModifyOnRequest() {
+        return isSessionModifyOnRequest;
+    }
+
+    public void setPlayToneDone(boolean playDone) {
+        isPlayVideoUpgradeWattingToneDone = playDone;
+    }
+
+    public boolean getPlayToneDone() {
+        return isPlayVideoUpgradeWattingToneDone;
+    }
+
+    public void onSessionModifyResponse(Call call, VideoProfile videoProfile) {
+        Log.i(TAG, "onSessionModifyResponse() isSessionModifyOnRequest = " + isSessionModifyOnRequest);
+        if (isSessionModifyOnRequest) {
+            isSessionModifyOnRequest = false;
+        }
+        setPlayToneDone(false);
     }
 
     public Collection<Call> getCalls() {
@@ -1262,6 +1411,28 @@ public class CallsManager extends Call.ListenerBase
         boolean isReusedCall;
         Call call = reuseOutgoingCall(handle);
 
+        /* Unisoc: Add for VoLTE @{ */
+        isConferenceDial = false;
+        callees = null;
+        if(extras != null){
+            isConferenceDial = extras.getBoolean("android.intent.extra.IMS_CONFERENCE_REQUEST",false);
+            callees = extras.getStringArray("android.intent.extra.IMS_CONFERENCE_PARTICIPANTS");
+            Log.i(this, "processOutgoingCallIntent->isConferenceDial:"+isConferenceDial);
+        }
+        /* @} */
+
+        //UNISOC:add for bug1381939
+        if (!mCalls.isEmpty()) {
+            for (Call hasCall : mCalls) {
+                if (isConferenceDial && hasCall != null && hasCall.isConference() && hasCall.getState() == CallState.ON_HOLD) {
+                    Log.i(this, "Can not invite when there has a conference call in hold state");
+                    Message msg = mInviteHandler.obtainMessage(EVENT_INVITE_CALL_NOT_ALLOWED);
+                    mInviteHandler.sendMessage(msg);
+                    return CompletableFuture.completedFuture(null);
+                }
+            }
+        }
+
         PhoneAccount account =
                 mPhoneAccountRegistrar.getPhoneAccount(requestedAccountHandle, initiatingUser);
         boolean isSelfManaged = account != null && account.isSelfManaged();
@@ -1342,7 +1513,9 @@ public class CallsManager extends Call.ListenerBase
         CompletableFuture<List<PhoneAccountHandle>> accountsForCall =
                 CompletableFuture.completedFuture((Void) null).thenComposeAsync((x) ->
                                 findOutgoingCallPhoneAccount(requestedAccountHandle, handle,
-                                        VideoProfile.isVideo(finalVideoState), initiatingUser),
+                                        // UNISOC: add for bug1197534
+                                        VideoProfile.isVideo(finalVideoState), finalCall.isEmergencyCall(),
+                                        initiatingUser, extras),
                         new LoggedHandlerExecutor(outgoingCallHandler, "CM.fOCP", mLock));
 
         // This is a block of code that executes after the list of potential phone accts has been
@@ -1394,6 +1567,7 @@ public class CallsManager extends Call.ListenerBase
                     // then it has already passed the makeRoomForOutgoingCall check once and will
                     // fail the second time due to the call transitioning into the CONNECTING state.
                     if (!isPotentialInCallMMICode && (!isReusedCall
+                            && !isConferenceDial  //Unisoc: Add for VoLTE, do not hold conference call
                             && !makeRoomForOutgoingCall(finalCall, finalCall.isEmergencyCall()))) {
                         Call foregroundCall = getForegroundCall();
                         Log.d(CallsManager.this, "No more room for outgoing call %s ", finalCall);
@@ -1549,6 +1723,16 @@ public class CallsManager extends Call.ListenerBase
 
                     setIntentExtrasAndStartTime(callToUse, extras);
                     setCallSourceToAnalytics(callToUse, originalIntent);
+                    /* Unisoc: Add for VoLTE @{ */
+                    if(extras != null){//add for bug1158478
+                        extras.putBoolean("android.intent.extra.IMS_CONFERENCE_REQUEST",isConferenceDial);
+                        extras.putStringArray("android.intent.extra.IMS_CONFERENCE_PARTICIPANTS",callees);
+                        callToUse.setIntentExtras(extras);
+                    }else{
+                        Log.i(this, "extras == null");
+                    }
+
+                    /* @} */
 
                     if (isPotentialMMICode(handle) && !isSelfManaged) {
                         // Do not add the call if it is a potential MMI code.
@@ -1623,8 +1807,8 @@ public class CallsManager extends Call.ListenerBase
      */
     @VisibleForTesting
     public CompletableFuture<List<PhoneAccountHandle>> findOutgoingCallPhoneAccount(
-            PhoneAccountHandle targetPhoneAccountHandle, Uri handle, boolean isVideo,
-            UserHandle initiatingUser) {
+            PhoneAccountHandle targetPhoneAccountHandle, Uri handle, boolean isVideo, boolean isEmergencyCall,
+            UserHandle initiatingUser, Bundle extras) {
         if (isSelfManaged(targetPhoneAccountHandle, initiatingUser)) {
             return CompletableFuture.completedFuture(Arrays.asList(targetPhoneAccountHandle));
         }
@@ -1640,6 +1824,13 @@ public class CallsManager extends Call.ListenerBase
                     false /* isVideo */);
         }
         Log.v(this, "findOutgoingCallPhoneAccount: accounts = " + accounts);
+
+        /* Unisoc: add for bug597260 and bug599640 1197534 @{ */
+        if(targetPhoneAccountHandle == null){
+            targetPhoneAccountHandle = TelecomUtils.getSupportVideoPhoneAccout(accounts,isEmergencyCall,extras,mContext);
+            Log.i(this, "startoutgoning isEmergencyCall =" + isEmergencyCall + ",targetPhoneAccountHandle = " + targetPhoneAccountHandle);
+        }
+        /* @} */
 
         // Only dial with the requested phoneAccount if it is still valid. Otherwise treat this
         // call as if a phoneAccount was not specified (does the default behavior instead).
@@ -1891,6 +2082,7 @@ public class CallsManager extends Call.ListenerBase
         } else if (useSpeakerWhenDocked && useSpeakerForDock) {
             Log.i(this, "%s Starting with speakerphone because car is docked.", call);
         } else if (useSpeakerForVideoCall) {
+            mInVideoMode = true; // UNISOC: add for bug1152803
             Log.i(this, "%s Starting with speakerphone because its a video call.", call);
         }
 
@@ -1984,12 +2176,32 @@ public class CallsManager extends Call.ListenerBase
      * @return {@code true} if the speakerphone should be enabled.
      */
     public boolean isSpeakerphoneAutoEnabledForVideoCalls(int videoState) {
+        // UNISOC: add for bug1146806
+        mInVideoMode = VideoProfile.isVideo(videoState);
+
+        //UNISOC:add for bug1152781
+        if(mContext != null && mContext.getResources().getBoolean(R.bool.config_is_close_auto_speaker)) {
+            Call call = getDialingCall();
+            if(call != null && call.can(Connection.CAPABILITY_SUPPORTS_VT_LOCAL_RX)) {
+                Log.i(this, "isSpeakerphoneAutoEnabledForVideoCalls");
+                return false;
+            }
+        }
         return VideoProfile.isVideo(videoState) &&
             !mWiredHeadsetManager.isPluggedIn() &&
             !mBluetoothRouteManager.isBluetoothAvailable() &&
             isSpeakerEnabledForVideoCalls();
     }
 
+    //unisoc bug1110209 back to headphone after cbfs
+    // UNISOC: modify for bug1118223
+    public boolean isEarpiecephoneAutoEnabled(int videoState) {
+        // UNISOC: add for bug1146806
+        mInVideoMode = VideoProfile.isVideo(videoState);
+        return !VideoProfile.isVideo(videoState) &&
+                !mWiredHeadsetManager.isPluggedIn() &&
+                !mBluetoothRouteManager.isBluetoothAvailable();
+    }
     /**
      * Determines if the speakerphone should be enabled for when docked.  Speakerphone
      * should be enabled if the device is docked and bluetooth or the wired headset are
@@ -2043,7 +2255,12 @@ public class CallsManager extends Call.ListenerBase
         } else {
             if (call.getState() != CallState.ON_HOLD) {
                 call.playDtmfTone(digit);
-                mDtmfLocalTonePlayer.playTone(call, digit);
+                /*UNISOC add for bug1148100 @{*/
+                if(mContext != null &&
+                        mContext.getApplicationContext().getResources().getBoolean(com.android.internal.R.bool.config_enableDtmfLocalTone) ) {
+                    mDtmfLocalTonePlayer.playTone(call, digit);
+                }
+                /*@}*/
             } else {
                 Log.i(this, "Request to play DTMF tone for held call %s", call.getId());
             }
@@ -2405,10 +2622,26 @@ public class CallsManager extends Call.ListenerBase
                 // This case is driven by telephony requirements ultimately.
                 Call heldCall = getHeldCallByConnectionService(call.getTargetPhoneAccount());
                 if (heldCall != null) {
+                    //UNISOC: add for bug1215007
+                    if (mContext != null && mContext.getResources()
+                            .getBoolean(R.bool.config_is_support_local_tone)) {
+                        activeCall.disconnect();
+                        Log.i(this, "holdActiveCallForNewCall: Disconnect active " +
+                                        "call %s before " + "holding held call %s.", activeCall.getId(),
+                                heldCall.getId());
+                        return false;
+                    }
+
                     heldCall.disconnect();
                     Log.i(this, "holdActiveCallForNewCall: Disconnect held call %s before "
                                     + "holding active call %s.",
                             heldCall.getId(), activeCall.getId());
+                    //UNISOC:add for bug1226924
+                    try {
+                        Thread.sleep(50);
+                    } catch (InterruptedException e) {
+                        // do nothing
+                    }
                 }
                 Log.i(this, "holdActiveCallForNewCall: Holding active %s before making %s active.",
                         activeCall.getId(), call.getId());
@@ -2474,6 +2707,13 @@ public class CallsManager extends Call.ListenerBase
     void markCallAsDisconnected(Call call, DisconnectCause disconnectCause) {
         call.setDisconnectCause(disconnectCause);
         setCallState(call, CallState.DISCONNECTED, "disconnected set explicitly");
+        //unisoc bug1110209 back to headphone after cbfs
+        Log.i(this, "markCallAsDisconnected HoldCall: "+getHeldCall());
+        if(null != getHeldCall()){
+            updateVideoMode();
+        } else if(getCalls().isEmpty()){
+            mInVideoMode = false;
+        }
     }
 
     /**
@@ -2505,6 +2745,16 @@ public class CallsManager extends Call.ListenerBase
                 // has no means of unholding it themselves.
                 Log.i(this, "Auto-unholding held foreground call (call doesn't support hold)");
                 foregroundCall.unhold();
+            } else if(mContext.getResources().getBoolean(R.bool.config_unhold_call)) {
+                // SPRD porting: Add for EE requirement bug693518
+                if (foregroundCall != null && foregroundCall.getState() == CallState.ON_HOLD) {
+                    Log.i(this,"markCallAsRemoved unHold call");
+                    foregroundCall.unhold();
+                }
+            }
+            //unisoc bug1110209 back to headphone after cbfs
+            if(getCalls().isEmpty()){
+                mInVideoMode = false;
             }
         }, new LoggedHandlerExecutor(mHandler, "CM.mCAR", mLock));
     }
@@ -2609,7 +2859,9 @@ public class CallsManager extends Call.ListenerBase
                         return true;
                     }
                 } else {
-                    ringingCall.answer(VideoProfile.STATE_AUDIO_ONLY);
+                    // ringingCall.answer(ringingCall.getVideoState()); //Unisoc: modify by bug736420
+                    // UNISOC: modify for bug1139381 as 9.0
+                    this.answerCall(ringingCall, ringingCall.getVideoState());
                     return true;
                 }
             } else if (HeadsetMediaButton.LONG_PRESS == type) {
@@ -2634,9 +2886,48 @@ public class CallsManager extends Call.ListenerBase
                 }
                 return true;
             }
+            /* Unisoc FL0108020022: Add for double press handset media button feature. @{ */
+            else if (HeadsetMediaButton.DOUBLE_PRESS == type) {
+                Call callToHold = getActiveCall();
+                if (callToHold != null) {
+                    Log.addEvent(callToHold, LogUtils.Events.INFO,
+                            "handleHeadsetHook: double press -> hold.");
+                    holdCall(callToHold);
+                } else {
+                    Call callToUnHold = getHeldCall();
+                    if (callToUnHold != null) {
+                        Log.addEvent(callToHold, LogUtils.Events.INFO,
+                                "handleHeadsetHook: double press -> unhold.");
+                        unholdCall(callToUnHold);
+                    }
+                }
+            }
+            /* @} */
         }
         return false;
     }
+
+    /* UNISOC add for bug 1112532(1088739) @{ */
+    private final ContentObserver mContentObserver = new ContentObserver(mHandler) {
+        @Override
+        public void onChange(boolean selfChange) {
+            super.onChange(selfChange);
+            Log.i(TAG, "Settings.Global changed!");
+            if (!mCanAddCall) {
+                updateCanAddCall();
+            }
+        }
+    };
+    private boolean listenDeviceProvisionedFlg = false;
+    private void listenDeviceProvisioned() {
+        mContext.getContentResolver().registerContentObserver(Settings.Global.CONTENT_URI,true,mContentObserver);
+        listenDeviceProvisionedFlg = true;
+    }
+    private void unlistenDeviceProvisioned() {
+        mContext.getContentResolver().unregisterContentObserver(mContentObserver);
+        listenDeviceProvisionedFlg = false;
+    }
+    /* @} */
 
     /**
      * Returns true if telecom supports adding another top-level call.
@@ -2647,7 +2938,15 @@ public class CallsManager extends Call.ListenerBase
                 Settings.Global.DEVICE_PROVISIONED, 0) != 0;
         if (!isDeviceProvisioned) {
             Log.d(TAG, "Device not provisioned, canAddCall is false.");
+            // UNISOC add for bug 1112532(1088739)
+            if (!listenDeviceProvisionedFlg) {
+                listenDeviceProvisioned();
+            }
             return false;
+        }
+        // UNISOC add for bug 1112532(1088739)
+        if (listenDeviceProvisionedFlg) {
+            unlistenDeviceProvisioned();
         }
 
         if (getFirstCallWithState(OUTGOING_CALL_STATES) != null) {
@@ -2846,7 +3145,9 @@ public class CallsManager extends Call.ListenerBase
     /**
      * @return the call state currently tracked by {@link PhoneStateBroadcaster}
      */
-    int getCallState() {
+    // Unisoc FL0108020014: Flip to mute for incoming call.
+    @VisibleForTesting
+    public int getCallState() {
         return mPhoneStateBroadcaster.getCallState();
     }
 
@@ -3364,8 +3665,54 @@ public class CallsManager extends Call.ListenerBase
                 && hasUnholdableCallsForOtherConnectionService(incomingCall.getTargetPhoneAccount())
                 && incomingCall.getHandoverSourceCall() == null;
     }
-
+    /* UNISOC: modify for bug1170197. @{ */
+    private boolean disconnectOtherCallForEmergencyCall(Call call) {
+        CarrierConfigManager configManager = (CarrierConfigManager) mContext.getSystemService(Context.CARRIER_CONFIG_SERVICE);
+        int currentSubId = TelecomUtils.getSubIdForPhoneAccountHandle(mContext, call.getTargetPhoneAccount());
+        if (configManager.getConfigForSubId(currentSubId) != null) {
+            return configManager.getConfigForSubId(currentSubId).getBoolean(CarrierConfigManagerEx.KEY_DISCONNECT_OTHER_CALL_FOR_EMERGENCY_CALL);
+        }
+        Log.i(this, "disconnectOtherCallForEmergencyCall config is null for subid: d%.", currentSubId);
+        return true;
+    }
+    /* @} */
     private boolean makeRoomForOutgoingCall(Call call, boolean isEmergency) {
+        /* UNISOC: modify for bug1129217 1170197. @{ */
+        if (isEmergency && disconnectOtherCallForEmergencyCall(call)){
+            Call holdCall = getFirstCallWithState(CallState.ON_HOLD);
+            Call ringingCall = getFirstCallWithState(CallState.RINGING);
+            Call liveCall = getFirstCallWithState(LIVE_CALL_STATES);
+            boolean flg = false;
+            if (holdCall != null && holdCall != call && !holdCall.isEmergencyCall()){
+                flg = true;
+                holdCall.disconnect();
+            }
+            if (ringingCall != null && !ringingCall.isEmergencyCall()) {
+                flg = true;
+                ringingCall.disconnect();
+            }
+            if (hasMaximumLiveCalls(call) && liveCall != call && !liveCall.isEmergencyCall()) {
+                flg = true;
+                // Disconnect the current outgoing call if it's not an emergency call. If the
+                // user tries to make two outgoing calls to different emergency call numbers,
+                // we will try to connect the first outgoing call.
+                liveCall.disconnect();
+            }
+            if (flg) {
+                try {
+                    Thread.sleep(500);
+                } catch (InterruptedException e) {
+                    // do nothing
+                }
+                return true;
+            }
+        }
+        /* @} */
+        // UNISOC: add for bug1140638
+        if (hasMaximumManagedRingingCalls(call)) {
+            Log.i(this, "makeRoomForOutgoingCall disconnect the dialing call for ringring call");
+            return false;
+        }
         if (hasMaximumLiveCalls(call)) {
             // NOTE: If the amount of live calls changes beyond 1, this logic will probably
             // have to change.
@@ -3379,7 +3726,7 @@ public class CallsManager extends Call.ListenerBase
                 // state since the call was already populated into the list.
                 return true;
             }
-
+            
             if (hasMaximumOutgoingCalls(call)) {
                 Call outgoingCall = getFirstCallWithState(OUTGOING_CALL_STATES);
                 if (isEmergency && !outgoingCall.isEmergencyCall()) {
@@ -3487,9 +3834,52 @@ public class CallsManager extends Call.ListenerBase
             // speaker automatically until the call goes active.
             return;
         }
+        /* SPRD: add for Bug 864475 @{ */
         if (call.getStartWithSpeakerphoneOn()) {
             setAudioRoute(CallAudioState.ROUTE_SPEAKER, null);
+            //unisoc bug1100209 back to headphone after cbfs
+            updateVideoMode();
             call.setStartWithSpeakerphoneOn(false);
+        } else { /* SPRD: Add for VoLTE @{ */
+            updateVideoMode();
+        }
+        /* @} */
+    }
+
+    private void updateVideoMode(){
+        boolean isVideo = false;
+        Call call = getRingingCall();
+        if(call == null){
+            call = getDialingCall();
+        }
+        if(call == null){
+            call = getActiveCall();
+        }
+        if(call == null){
+            call = getHeldCall();
+        }
+        Log.i(this, "mInVideoMode: "+mInVideoMode+" isVideo:"+isVideo +"  Call is null:"+ call);
+        if(call != null){
+            isVideo = VideoProfile.isVideo(call.getVideoState());
+            if(mInVideoMode == isVideo){
+                return;
+            }
+            mInVideoMode = isVideo;
+            if(isSpeakerphoneAutoEnabledForVideoCalls(call.getVideoState())){
+                //mCallAudioManager.setCallAudioRouteFocusState(CallAudioRouteStateMachine.HAS_FOCUS);//SPRD: add for bug604904
+                //UNISOC: add for bug1152781
+                if((call.getState() == CallState.CONNECTING || call.getState() == CallState.DIALING)
+                        && mContext != null && mContext.getResources().getBoolean(R.bool.config_is_close_auto_speaker)
+                        && call.can(Connection.CAPABILITY_SUPPORTS_VT_LOCAL_RX)) {
+                    Log.i(this, "should not open speaker automaticlly in cmcc version.");
+                    return;
+                }
+                setAudioRoute(CallAudioState.ROUTE_SPEAKER, null);
+            }else if(isEarpiecephoneAutoEnabled(call.getVideoState())) {
+                //add for SPRD:Bug 615699  Speaker is on when fall to voice mail
+                //&& (mCallAudioManager.getCallAudioState().getRoute() == CallAudioState.ROUTE_SPEAKER)){
+                setAudioRoute(CallAudioState.ROUTE_EARPIECE, null);
+            }
         }
     }
 
@@ -3554,6 +3944,11 @@ public class CallsManager extends Call.ListenerBase
         call.setHandle(connection.getHandle(), connection.getHandlePresentation());
         call.setCallerDisplayName(connection.getCallerDisplayName(),
                 connection.getCallerDisplayNamePresentation());
+        /* UNISOC: add for bug1157155 @{*/
+        if (connection.getConnectTimeMillis() != 0) {
+            call.setCreationTimeMillis(connection.getConnectTimeMillis());
+        }
+        /*@}*/
         call.addListener(this);
 
         // In case this connection was added via a ConnectionManager, keep track of the original
@@ -4380,6 +4775,24 @@ public class CallsManager extends Call.ListenerBase
         return ;
     }
 
+
+    /* UNISOC Feature Porting: Support Telcel Operator requirement. @{ */
+    /**
+     * @return 3rd call waiting tone is supported.
+     */
+    public boolean is3rdCallWaitingToneSupport() {
+        return mTelcelCallWaitingToneHelper.is3rdCallWaitingToneSupport();
+    }
+
+    public void play3rdCallWaitingTone() {
+        mTelcelCallWaitingToneHelper.play3rdCallWaitingTone();
+    }
+
+    public void stop3rdCallWaitingTone() {
+        mTelcelCallWaitingToneHelper.stop3rdCallWaitingTone();
+    }
+    /* @} */
+
     public void acceptHandover(Uri srcAddr, int videoState, PhoneAccountHandle destAcct) {
         final String handleScheme = srcAddr.getSchemeSpecificPart();
         Call fromCall = mCalls.stream()
@@ -4554,6 +4967,8 @@ public class CallsManager extends Call.ListenerBase
     public void resetConnectionTime(Call call) {
         call.setConnectTimeMillis(System.currentTimeMillis());
         call.setConnectElapsedTimeMillis(SystemClock.elapsedRealtime());
+        //UNISOC Added for Bug1145755
+        call.onConnectionEvent(TelephonyManagerEx.EVENT_CDMA_CALL_ANSWERED, null);
         if (mCalls.contains(call)) {
             for (CallsManagerListener listener : mListeners) {
                 listener.onConnectionTimeChanged(call);
@@ -4582,6 +4997,17 @@ public class CallsManager extends Call.ListenerBase
         errorIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         mContext.startActivityAsUser(errorIntent, UserHandle.CURRENT);
     }
+
+    /* Unisoc FL0108020016: MaxRingingVolume and Vibrate. @{ */
+    @VisibleForTesting
+    public Call getActiveOrBackgroundCall() {
+        Call call = getActiveCall();
+        if (call == null) {
+            call = getHeldCall();
+        }
+        return call;
+    }
+    /* @} */
 
     /**
      * Handles changes to a {@link PhoneAccount}.

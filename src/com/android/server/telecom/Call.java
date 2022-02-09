@@ -47,6 +47,7 @@ import android.telecom.StatusHints;
 import android.telecom.TelecomManager;
 import android.telecom.VideoProfile;
 import android.telephony.PhoneNumberUtils;
+import android.telephony.TelephonyManager;
 import android.text.TextUtils;
 import android.util.StatsLog;
 import android.os.UserHandle;
@@ -56,7 +57,9 @@ import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telecom.IVideoProvider;
 import com.android.internal.telephony.CallerInfo;
 import com.android.internal.telephony.SmsApplication;
+import com.android.internal.telephony.gsm.SuppServiceNotification;
 import com.android.internal.util.Preconditions;
+import com.unisoc.server.telecom.TelecomUtils;
 
 import java.io.IOException;
 import java.lang.String;
@@ -248,7 +251,7 @@ public class Call implements CreateConnectionResponse, EventManager.Loggable,
     /**
      * One of CALL_DIRECTION_INCOMING, CALL_DIRECTION_OUTGOING, or CALL_DIRECTION_UNKNOWN
      */
-    private final int mCallDirection;
+    private int mCallDirection;
 
     /**
      * The post-dial digits that were dialed after the network portion of the number
@@ -463,6 +466,9 @@ public class Call implements CreateConnectionResponse, EventManager.Loggable,
      */
     private boolean mIsRemotelyHeld = false;
 
+    // UNISOC: add for bug1285705
+    private boolean mIsRemotelyHeldForLocalTone = false;
+
     /**
      * Indicates whether the {@link PhoneAccount} associated with this call is self-managed.
      * See {@link PhoneAccount#CAPABILITY_SELF_MANAGED} for more information.
@@ -539,6 +545,9 @@ public class Call implements CreateConnectionResponse, EventManager.Loggable,
      * {@link com.android.server.telecom.callfiltering.IncomingCallFilter.CallFilter} modules.
      */
     private boolean mIsUsingCallFiltering = false;
+
+    // UNISOC: add for bug1142782
+    private boolean mIsDialingAudioCall = false;
 
     /**
      * Persists the specified parameters and initializes the new instance.
@@ -925,6 +934,10 @@ public class Call implements CreateConnectionResponse, EventManager.Loggable,
                 mDisconnectTimeMillis = 0;
                 mDisconnectElapsedTimeMillis = 0;
             } else if (mState == CallState.DISCONNECTED) {
+                // UNISOC: modify for bug 712295 and bug1142782
+                if (!mIsDialingAudioCall) {
+                    mVideoStateHistory |= mVideoState;
+                }
                 mDisconnectTimeMillis = mClockProxy.currentTimeMillis();
                 mDisconnectElapsedTimeMillis = mClockProxy.elapsedRealtime();
                 mAnalytics.setCallEndTime(mDisconnectTimeMillis);
@@ -1590,6 +1603,12 @@ public class Call implements CreateConnectionResponse, EventManager.Loggable,
 
             mAnalytics.addCallProperties(mConnectionProperties);
 
+            //UNISOC:add for bug1201575
+            if (connectionProperties == Connection.PROPERTY_IS_MT_CONFERENCE_CALL &&
+                    !TelecomUtils.showconferenceparticipantlabelconfig(mContext, this)) {
+                Log.i(this, "Megafon feature : Do not show conference label in the participants");
+                mConnectionProperties &= ~Connection.PROPERTY_IS_MT_CONFERENCE_CALL;
+            }
             int xorProps = previousProperties ^ mConnectionProperties;
             Log.addEvent(this, LogUtils.Events.PROPERTY_CHANGE,
                     "Current: [%s], Removed [%s], Added [%s]",
@@ -1763,6 +1782,12 @@ public class Call implements CreateConnectionResponse, EventManager.Loggable,
             case CALL_DIRECTION_INCOMING:
                 // Listeners (just CallsManager for now) will be responsible for checking whether
                 // the call should be blocked.
+                /* UNISOC: FL0108020005 Porting Auto Answer Feature @{ */
+                if (connection.getState() == Connection.STATE_ACTIVE) {
+                    setState(CallState.ACTIVE, "incoming call is active");
+                    Log.i(this, "handleCreateConnectionSuccessful-> incoming call is active!");
+                }
+                /*@}*/
                 for (Listener l : mListeners) {
                     l.onSuccessfulIncomingCall(this);
                 }
@@ -2093,7 +2118,8 @@ public class Call implements CreateConnectionResponse, EventManager.Loggable,
         return mState == CallState.ACTIVE;
     }
 
-    Bundle getExtras() {
+    // Unisoc FL1000060554: Volte Local Tone Feature.
+    public Bundle getExtras() {
         return mExtras;
     }
 
@@ -2117,6 +2143,12 @@ public class Call implements CreateConnectionResponse, EventManager.Loggable,
             mExtras = new Bundle();
         }
         mExtras.putAll(extras);
+
+        // UNISOC: Fix bug1206777.
+        // Update call direction if changed.
+        if (extras.containsKey(Connection.EXTRA_CALL_DIRECTION)) {
+            mCallDirection = getRemappedCallDirection(extras.getInt(Connection.EXTRA_CALL_DIRECTION));
+        }
 
         for (Listener l : mListeners) {
             l.onExtrasChanged(this, source, extras);
@@ -2884,6 +2916,16 @@ public class Call implements CreateConnectionResponse, EventManager.Loggable,
         // For all other times we add to the video state history, see #setState.
         if (isActive() || getState() == CallState.DISCONNECTED) {
             mVideoStateHistory = mVideoStateHistory | videoState;
+            // UNISOC: add for bug1142782
+            mIsDialingAudioCall = false;
+        }
+
+        // UNISOC: add for bug1142782
+        if(!mIsDialingAudioCall
+                && (getState() == CallState.NEW || getState() == CallState.CONNECTING || getState() == CallState.DIALING )
+                && !VideoProfile.isVideo(videoState)){
+            Log.i(this,"setVideoState mIsDialingAudioCall = true");
+            mIsDialingAudioCall = true;
         }
 
         int previousVideoState = mVideoState;
@@ -3045,6 +3087,10 @@ public class Call implements CreateConnectionResponse, EventManager.Loggable,
         return mIsRemotelyHeld;
     }
 
+    // UNISOC: add for bug1285705
+    public boolean isRemotelyHeldForTone() {
+        return mIsRemotelyHeldForLocalTone;
+    }
     /**
      * Handles Connection events received from a {@link ConnectionService}.
      *
@@ -3072,6 +3118,18 @@ public class Call implements CreateConnectionResponse, EventManager.Loggable,
                 l.onCallHoldFailed(this);
             }
         } else {
+            if (TelephonyManager.EVENT_SUPPLEMENTARY_SERVICE_NOTIFICATION.equals(event)) {
+                int type = extras == null ? 0 : extras.getInt(TelephonyManager.EXTRA_NOTIFICATION_TYPE, 0);
+                int code = extras == null ? 0 :extras.getInt(TelephonyManager.EXTRA_NOTIFICATION_CODE, 0);
+                if (type == SuppServiceNotification.NOTIFICATION_TYPE_CODE_2) {
+                    if (code == SuppServiceNotification.CODE_2_CALL_ON_HOLD) {
+                        mIsRemotelyHeldForLocalTone = true;
+                    } else if (code == SuppServiceNotification.CODE_2_CALL_RETRIEVED) {
+                        mIsRemotelyHeldForLocalTone = false;
+                    }
+                    Log.d(this, "isRemotelyHeldForTone:" + isRemotelyHeldForTone());
+                }
+            }
             for (Listener l : mListeners) {
                 l.onConnectionEvent(this, event, extras);
             }
@@ -3189,7 +3247,14 @@ public class Call implements CreateConnectionResponse, EventManager.Loggable,
             mVideoStateHistory = mVideoState;
         }
 
-        mVideoStateHistory |= mVideoState;
+        // UNISOC: add for bug1142782
+        if (!mIsDialingAudioCall) {
+            mVideoStateHistory |= mVideoState;
+        // UNISOC: add for bug1157383
+        } else if ((newState == CallState.NEW || newState == CallState.CONNECTING
+                || newState == CallState.DIALING) && !VideoProfile.isVideo(mVideoState)) {
+            mVideoStateHistory = mVideoState;
+        }
     }
 
     /**
@@ -3218,6 +3283,15 @@ public class Call implements CreateConnectionResponse, EventManager.Loggable,
             mCallsManager.setAudioRoute(CallAudioState.ROUTE_SPEAKER, null);
         }
     }
+    /* UNISOC: modify for bug1118223 @{ */
+    public void maybeEnableEarpieceForVideoDowngrade(@VideoProfile.VideoState int newVideoState) {
+        if (mCallsManager.isEarpiecephoneAutoEnabled(newVideoState)) {
+            Log.i(this, "maybeEnableSpeakerForVideoCall; callId=%s, auto-disable speaker for call"
+                    + " downgraded to voice.", getId());
+            mCallsManager.setAudioRoute(CallAudioState.ROUTE_EARPIECE, null);
+        }
+    }
+    /* @} */
 
     /**
      * Remaps the call direction as indicated by an {@link android.telecom.Call.Details} direction

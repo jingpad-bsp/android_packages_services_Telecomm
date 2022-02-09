@@ -32,10 +32,10 @@
     <string name="respond_via_sms_canned_response_2" msgid="4074450431532859214">"我待會就回電。"</string>
     <string name="respond_via_sms_canned_response_3" msgid="3496079065723960450">"我晚點回電。"</string>
     <string name="respond_via_sms_canned_response_4" msgid="1698989243040062190">"我現在不方便講話，晚點再打來好嗎？"</string>
-    <string name="respond_via_sms_setting_title" msgid="3754000371039709383">"快速回應"</string>
-    <string name="respond_via_sms_setting_title_2" msgid="6104662227299493906">"編輯快速回應"</string>
+    <string name="respond_via_sms_setting_title" msgid="3754000371039709383">"快速回覆"</string>
+    <string name="respond_via_sms_setting_title_2" msgid="6104662227299493906">"編輯快速回覆"</string>
     <string name="respond_via_sms_setting_summary" msgid="9150281183930613065"></string>
-    <string name="respond_via_sms_edittext_dialog_title" msgid="20379890418289778">"快速回應"</string>
+    <string name="respond_via_sms_edittext_dialog_title" msgid="20379890418289778">"快速回覆"</string>
     <string name="respond_via_sms_confirmation_format" msgid="7229149977515784269">"訊息已傳送至 <xliff:g id="PHONE_NUMBER">%s</xliff:g>。"</string>
     <string name="respond_via_sms_failure_format" msgid="90791421289769504">"無法將訊息傳送到 <xliff:g id="PHONE_NUMBER">%s</xliff:g>。"</string>
     <string name="enable_account_preference_title" msgid="2021848090086481720">"通話帳戶"</string>
@@ -109,4 +109,19 @@
     <string name="phone_strings_emergency_call_made_dialog_title_txt" msgid="7421611725400166580">"已撥打緊急電話"</string>
     <string name="phone_strings_emergency_call_made_dialog_call_blocking_text_txt" msgid="4083285098613193052">"系統已停用來電封鎖功能，以便緊急應變人員與你聯絡。"</string>
     <string name="developer_title" msgid="1816273446906554627">"電信開發人員選單"</string>
+    <!-- UNISOC Feature Porting: show main/vice card feature @{ -->
+    <string name="main_card_slot">"主卡: "</string>
+    <string name="vice_card_slot">"副卡: "</string>
+    <!-- @} -->
+    <!-- UNISOC Feature Porting: Flip to silence from incoming calls. @{-->
+    <string name="incomingcall_flipping_silence_title">"翻轉靜音"</string>
+    <string name="flipping_summary">"來電時翻轉移動設備可以靜音"</string>
+    <!-- @} -->
+    <!-- UNISOC Feature Porting: Fade in ringer volume when incoming calls. @{ -->
+    <string name="fade_in_title">"鈴聲漸進播放"</string>
+    <string name="fade_in_summary">"功能開啟時, 來電鈴聲將漸進增大播放"</string>
+    <!-- @} -->
+    <!-- UNISOC:add for bug1381939 -->
+    <string name="forbidden_invite_call_message">"會議電話處於保持狀態，不允許邀請電話"</string>
+    <!-- @} -->
 </resources>

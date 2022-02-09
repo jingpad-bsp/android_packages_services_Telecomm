@@ -55,6 +55,8 @@ public class VideoProviderProxy extends Connection.VideoProvider {
      */
     public interface Listener {
         void onSessionModifyRequestReceived(Call call, VideoProfile videoProfile);
+        //UNISOC:add for bug1192597
+        void onSessionModifyResponse(Call call, VideoProfile videoProfile);
     }
 
     /**
@@ -218,6 +220,16 @@ public class VideoProviderProxy extends Connection.VideoProvider {
                             responseProfile == null ?
                                     VideoProfile.STATE_AUDIO_ONLY :
                                     responseProfile.getVideoState());
+                }
+                /* UNISOC: modify for bug1118223 1202224 @{ */
+                if (responseProfile != null && status != Connection.VideoProvider.SESSION_MODIFY_REQUEST_SUCCESS
+                    && !VideoProfile.isVideo(mCall.getVideoState())) {
+                    mCall.maybeEnableEarpieceForVideoDowngrade(responseProfile.getVideoState());
+                }
+                /* @} */
+                //UNISOC:add for bug1192597
+                for (Listener listener : mListeners) {
+                    listener.onSessionModifyResponse(mCall, requestProfile);
                 }
                 VideoProviderProxy.this.receiveSessionModifyResponse(status, requestProfile,
                         responseProfile);

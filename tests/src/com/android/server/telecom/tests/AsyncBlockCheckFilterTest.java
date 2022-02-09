@@ -81,6 +81,9 @@ public class AsyncBlockCheckFilterTest extends TelecomTestCase {
     private static final Uri TEST_HANDLE = Uri.parse("tel:1235551234");
     private static final int TEST_TIMEOUT = 1000;
 
+    // Unisoc FL0108060002: CallFireWall
+    private static int MARK_CALL_BLOCK_TYPE = 1;
+
     @Override
     @Before
     public void setUp() throws Exception {
@@ -99,7 +102,7 @@ public class AsyncBlockCheckFilterTest extends TelecomTestCase {
             return STATUS_BLOCKED_IN_LIST;
         }).when(mBlockCheckerAdapter)
                 .getBlockStatus(any(Context.class), eq(TEST_HANDLE.getSchemeSpecificPart()),
-                        any(Bundle.class));
+                        any(Bundle.class), MARK_CALL_BLOCK_TYPE);
 
         setEnhancedBlockingEnabled(false);
         mFilter.startFilterLookup(mCall, mCallback);
@@ -118,7 +121,7 @@ public class AsyncBlockCheckFilterTest extends TelecomTestCase {
             return STATUS_BLOCKED_IN_LIST;
         }).when(mBlockCheckerAdapter)
                 .getBlockStatus(any(Context.class), eq(TEST_HANDLE.getSchemeSpecificPart()),
-                        any(Bundle.class));
+                        any(Bundle.class), MARK_CALL_BLOCK_TYPE);
 
         setEnhancedBlockingEnabled(true);
         CallerInfoLookupHelper.OnQueryCompleteListener queryListener = verifyEnhancedLookupStart();
@@ -138,7 +141,7 @@ public class AsyncBlockCheckFilterTest extends TelecomTestCase {
             return STATUS_NOT_BLOCKED;
         }).when(mBlockCheckerAdapter)
                 .getBlockStatus(any(Context.class), eq(TEST_HANDLE.getSchemeSpecificPart()),
-                        any(Bundle.class));
+                        any(Bundle.class), MARK_CALL_BLOCK_TYPE);
 
         setEnhancedBlockingEnabled(false);
         mFilter.startFilterLookup(mCall, mCallback);
@@ -157,7 +160,7 @@ public class AsyncBlockCheckFilterTest extends TelecomTestCase {
             return STATUS_NOT_BLOCKED;
         }).when(mBlockCheckerAdapter)
                 .getBlockStatus(any(Context.class), eq(TEST_HANDLE.getSchemeSpecificPart()),
-                        any(Bundle.class));
+                        any(Bundle.class), MARK_CALL_BLOCK_TYPE);
 
         setEnhancedBlockingEnabled(true);
         CallerInfoLookupHelper.OnQueryCompleteListener queryListener = verifyEnhancedLookupStart();

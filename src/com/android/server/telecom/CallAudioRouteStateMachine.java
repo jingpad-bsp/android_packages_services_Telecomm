@@ -1760,8 +1760,10 @@ public class CallAudioRouteStateMachine extends StateMachine {
     private int getCurrentCallSupportedRoutes() {
         int supportedRoutes = CallAudioState.ROUTE_ALL;
 
-        if (mCallsManager.getForegroundCall() != null) {
-            supportedRoutes &= mCallsManager.getForegroundCall().getSupportedAudioRoutes();
+        //unisoc bug1189516
+        Call currentCall =  mCallsManager.getForegroundCall();
+        if (currentCall != null) {
+            supportedRoutes &= currentCall.getSupportedAudioRoutes();
         }
 
         return supportedRoutes;

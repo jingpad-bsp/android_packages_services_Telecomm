@@ -29,6 +29,7 @@ import android.media.Ringtone;
 import android.media.VolumeShaper;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.PowerManager;
 import android.os.Vibrator;
 
 import com.android.internal.annotations.VisibleForTesting;
@@ -159,10 +160,14 @@ public class Ringer {
     private Call mVibratingCall;
     private Call mCallWaitingCall;
 
+    private final Object mCallWaitingLock = new Object();  //UNISOC:add for bug1188621
+
     /**
      * Used to track the status of {@link #mVibrator} in the case of simultaneous incoming calls.
      */
     private boolean mIsVibrating = false;
+
+    private PowerManager mPowerManager;
 
     /** Initializes the Ringer. */
     @VisibleForTesting
@@ -197,6 +202,9 @@ public class Ringer {
 
         mIsHapticPlaybackSupportedByDevice =
                 mSystemSettingsUtil.isHapticPlaybackSupported(mContext);
+
+        //UNISOC:add for bug1186476
+        mPowerManager = (PowerManager) mContext.getSystemService(Context.POWER_SERVICE);
     }
 
     @VisibleForTesting
@@ -215,6 +223,11 @@ public class Ringer {
             // the call would start ringing again.
             Log.i(this, "startRinging called for non-ringing foreground callid=%s",
                     foregroundCall.getId());
+            return false;
+        }
+        //UNISOC: FL0108020005. Porting Auto Answer Feature
+        if (foregroundCall.isActive()) {
+            Log.i(this, "startRinging called with active foreground call.");
             return false;
         }
 
@@ -241,6 +254,12 @@ public class Ringer {
         boolean letDialerHandleRinging = mInCallController.doesConnectedDialerSupportRinging();
         boolean endEarly = isTheaterModeOn || letDialerHandleRinging || isSelfManaged ||
                 hasExternalRinger || isSilentRingingRequested;
+
+        /* UNISOC:add for bug1186476 */
+        if (!shouldRingForContact && mPowerManager != null && !mPowerManager.isScreenOn()) {
+            Log.i(this, "startRinging disconnect the call.");
+            foregroundCall.disconnect();
+        }  /*end*/
 
         if (endEarly) {
             if (letDialerHandleRinging) {
@@ -452,16 +471,38 @@ public class Ringer {
 
     public void stopCallWaiting() {
         Log.v(this, "stop call waiting.");
-        if (mCallWaitingPlayer != null) {
-            if (mCallWaitingCall != null) {
-                Log.addEvent(mCallWaitingCall, LogUtils.Events.STOP_CALL_WAITING_TONE);
-                mCallWaitingCall = null;
-            }
+        synchronized (mCallWaitingLock) {  //UNISOC:add for bug1188621
+            if (mCallWaitingPlayer != null) {
+                if (mCallWaitingCall != null) {
+                    Log.addEvent(mCallWaitingCall, LogUtils.Events.STOP_CALL_WAITING_TONE);
+                    mCallWaitingCall = null;
+                }
 
-            mCallWaitingPlayer.stopTone();
-            mCallWaitingPlayer = null;
+                mCallWaitingPlayer.stopTone();
+                mCallWaitingPlayer = null;
+            }
         }
     }
+
+    /* Unisoc FL0108020016: MaxRingingVolume and Vibrate. @{ */
+    @VisibleForTesting
+    public void maxRingingVolume() {
+        mRingtonePlayer.handleMaxRingingVolume(mContext);
+    }
+
+    // UNISOC: add for bug937206
+    @VisibleForTesting
+    public void stopMaxRingingVolume() {
+        mRingtonePlayer.stopMaxRingingVolume(mContext);
+    }
+    /* @} */
+
+    /* Unisoc FL0108020015: Fade down ringtone to vibrate. @{ */
+    @VisibleForTesting
+    public void fadeDownRingtone() {
+        mRingtonePlayer.fadeDownRingtone(mContext);
+    }
+   /* @} */
 
     private boolean shouldRingForContact(Uri contactUri) {
         final NotificationManager manager =

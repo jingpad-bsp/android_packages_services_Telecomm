@@ -173,7 +173,7 @@ public class TelecomService extends Service implements TelecomSystem.Component {
                             },
                             ConnectionServiceFocusManager::new,
                             new Timeouts.Adapter(),
-                            new AsyncRingtonePlayer(shouldPauseBetweenRingtoneRepeat),
+                            new AsyncRingtonePlayer(shouldPauseBetweenRingtoneRepeat, context),
                             new PhoneNumberUtilsAdapterImpl(),
                             new IncomingCallNotifier(context),
                             ToneGenerator::new,

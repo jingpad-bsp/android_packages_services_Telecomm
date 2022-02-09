@@ -1695,12 +1695,17 @@ public class ConnectionServiceWrapper extends ServiceBinder implements
      */
     private void handleConnectionServiceDeath() {
         if (!mPendingResponses.isEmpty()) {
-            CreateConnectionResponse[] responses = mPendingResponses.values().toArray(
-                    new CreateConnectionResponse[mPendingResponses.values().size()]);
-            mPendingResponses.clear();
-            for (int i = 0; i < responses.length; i++) {
-                responses[i].handleCreateConnectionFailure(
-                        new DisconnectCause(DisconnectCause.ERROR, "CS_DEATH"));
+            //UNISOC: add for bug1313109
+            try {
+                CreateConnectionResponse[] responses = mPendingResponses.values().toArray(
+                        new CreateConnectionResponse[mPendingResponses.values().size()]);
+                mPendingResponses.clear();
+                for (int i = 0; i < responses.length; i++) {
+                    responses[i].handleCreateConnectionFailure(
+                            new DisconnectCause(DisconnectCause.ERROR, "CS_DEATH"));
+                }
+            } catch (NegativeArraySizeException e) {
+                Log.e(this, e, "handleConnectionServiceDeath:" + e.getMessage());
             }
         }
         mCallIdMapper.clear();

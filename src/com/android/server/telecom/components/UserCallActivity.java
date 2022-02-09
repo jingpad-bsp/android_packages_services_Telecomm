@@ -29,6 +29,20 @@ import android.os.UserManager;
 import android.telecom.Log;
 import android.telecom.TelecomManager;
 
+/* Unisoc FL1000060380: Low power notificiation @{*/
+import com.android.server.telecom.R;
+import android.telecom.VideoProfile;
+import android.os.ServiceManager;
+import android.app.AlertDialog;
+import android.content.DialogInterface;
+import android.telecom.VideoProfile;
+import android.content.IntentFilter;
+import android.os.Build;
+import android.provider.Settings;
+import android.view.WindowManager;
+/* @} */
+
+
 // TODO: Needed for move to system service: import com.android.internal.R;
 
 /**
@@ -73,8 +87,17 @@ public class UserCallActivity extends Activity implements TelecomSystem.Componen
             // Create a new instance of intent to avoid modifying the
             // ActivityThread.ActivityClientRecord#intent directly.
             // Modifying directly may be a potential risk when relaunching this activity.
-            new UserCallIntentProcessor(this, userHandle).processIntent(new Intent(intent),
-                    getCallingPackage(), true /* hasCallAppOp*/, false /* isLocalInvocation */);
+            /* Unisoc FL1000060380: Low power notificiation @{*/
+            int videoState = intent.getIntExtra( TelecomManager.EXTRA_START_CALL_WITH_VIDEO_STATE,
+                                  VideoProfile.STATE_AUDIO_ONLY);
+            boolean isLowBattery = isBatteryLow(this);
+            if(VideoProfile.isVideo(videoState) && isLowBattery ) {
+                showLowBatteryDialDialog(this, intent, userHandle);
+            } else {
+                new UserCallIntentProcessor(this, userHandle).processIntent(new Intent(intent),
+                        getCallingPackage(), true /* hasCallAppOp*/, false /* isLocalInvocation */);
+            }
+            /* @} */
         } finally {
             Log.endSession();
             wakelock.release();
@@ -93,6 +116,58 @@ public class UserCallActivity extends Activity implements TelecomSystem.Componen
             }
         }
     }
+
+    /* Unisoc FL1000060380: Low power notificiation @{*/
+    private void showLowBatteryDialDialog(Context context, final Intent intent, UserHandle userHandle) {
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle(R.string.low_battery_warning_title);
+        builder.setMessage(R.string.low_battery_warning_message);
+        builder.setPositiveButton(R.string.low_battery_continue_video_call,
+                new android.content.DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface dialog, int which) {
+                        new UserCallIntentProcessor(context, userHandle).processIntent(new Intent(intent),
+                                getCallingPackage(), true /* hasCallAppOp*/, false /* isLocalInvocation */);
+                    }
+                });
+        builder.setNegativeButton(R.string.low_battery_convert_to_voice_call,
+                new android.content.DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface dialog, int which) {
+                        intent.putExtra(TelecomManager.EXTRA_START_CALL_WITH_VIDEO_STATE,
+                                VideoProfile.STATE_AUDIO_ONLY);
+                        new UserCallIntentProcessor(context, userHandle).processIntent(new Intent(intent),
+                                getCallingPackage(), true /* hasCallAppOp*/, false /* isLocalInvocation */);
+                    }
+                });
+        builder.setCancelable(false);
+        AlertDialog dialog = builder.create();
+        dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY);
+        dialog.show();
+    }
+
+    private boolean isBatteryLow(Context context) {
+        Log.d(this, "in isBatteryLow ");
+        boolean isShowLowBattery = context.getResources().getBoolean(com.android.internal.R.bool.config_show_low_battery_dialog);
+        if (isShowLowBattery) {
+            Intent batteryInfoIntent = context.registerReceiver(null, new IntentFilter(
+                    Intent.ACTION_BATTERY_CHANGED));
+            int current = batteryInfoIntent.getIntExtra("level", 0);
+            int total = batteryInfoIntent.getIntExtra("scale", 0);
+            if(total == 0){//add for bug1158479
+                Log.i(this, "Total battery capacity is 0");
+                return true;
+            } else if (current * 1.0 / total <= 0.15) {
+                Log.i(this, "in isBattery Low 15%");
+                return true;
+            } else {
+                Log.d(this, "in isBatteryLow high 15%");
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+    /* @} */
 
     @Override
     public TelecomSystem getTelecomSystem() {

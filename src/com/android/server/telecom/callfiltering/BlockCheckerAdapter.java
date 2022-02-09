@@ -38,7 +38,8 @@ public class BlockCheckerAdapter {
      *         {@link android.provider.BlockedNumberContract#STATUS_BLOCKED_RESTRICTED},
      *         {@link android.provider.BlockedNumberContract#STATUS_BLOCKED_UNKNOWN_NUMBER}.
      */
-    public int getBlockStatus(Context context, String number, Bundle extras) {
-        return BlockChecker.getBlockStatus(context, number, extras);
+     // Unisoc FL0108060002: CallFireWall
+    public int getBlockStatus(Context context, String number, Bundle extras, int blockType) {
+        return BlockChecker.getBlockStatus(context, number, extras, blockType);
     }
 }

@@ -97,17 +97,23 @@ public class RespondViaSmsSettings extends PreferenceActivity
         Log.d(this, "  preference = '%s'", preference);
         Log.d(this, "  newValue = '%s'", newValue);
 
-        EditTextPreference pref = (EditTextPreference) preference;
+        // UNISOC: modify for bug1195958
+        EditTextPreference pref = (EditTextPreference) findPreference(preference.getKey());
 
         // Copy the new text over to the title, just like in onCreate().
         // (Watch out: onPreferenceChange() is called *before* the
         // Preference itself gets updated, so we need to use newValue here
         // rather than pref.getText().)
-        pref.setTitle((String) newValue);
+        // If the newValue is an empty string, skip this to avoid setting an empty response.
+        // TODO: Show a popup to inform user that response didn't set because it's empty.
+        if (((String) newValue).length() != 0) {
+            pref.setTitle((String) newValue);
+            pref.setText((String) newValue);
 
-        // Save the new preference value.
-        SharedPreferences.Editor editor = mPrefs.edit();
-        editor.putString(pref.getKey(), (String) newValue).commit();
+            // Save the new preference value.
+            SharedPreferences.Editor editor = mPrefs.edit();
+            editor.putString(pref.getKey(), (String) newValue).commit();
+        }
 
         // If the user just reset the quick response to its original text, clear the pref.
         QuickResponseUtils.maybeResetQuickResponses(this, mPrefs);

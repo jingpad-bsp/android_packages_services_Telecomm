@@ -103,7 +103,8 @@ public class BluetoothPhoneServiceImpl {
                     Log.i(TAG, "BT - answering call");
                     Call call = mCallsManager.getRingingCall();
                     if (call != null) {
-                        mCallsManager.answerCall(call, VideoProfile.STATE_AUDIO_ONLY);
+                        // Unisoc FL0108120001: 3G Video call.
+                        mCallsManager.answerCall(call, call.getVideoState());
                         return true;
                     }
                     return false;
@@ -167,15 +168,19 @@ public class BluetoothPhoneServiceImpl {
                 Log.startSession("BPSI.gNO");
                 long token = Binder.clearCallingIdentity();
                 try {
-                    Log.i(TAG, "getNetworkOperator");
-                    PhoneAccount account = getBestPhoneAccount();
+                    Log.i(TAG, "getNetworkOperator:"+TelephonyManager.from(mContext).getNetworkOperatorName());
+                    /* UNISOC: add for bug1131227 @{ */
+                   /* PhoneAccount account = getBestPhoneAccount();
                     if (account != null && account.getLabel() != null) {
                         return account.getLabel().toString();
                     } else {
                         // Finally, just get the network name from telephony.
                         return TelephonyManager.from(mContext)
                                 .getNetworkOperatorName();
-                    }
+                    } */
+                    // Finally, just get the network name from telephony.
+                    return TelephonyManager.from(mContext).getNetworkOperatorName();
+                    /* @} */
                 } finally {
                     Binder.restoreCallingIdentity(token);
                     Log.endSession();

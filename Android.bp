@@ -1,9 +1,19 @@
 // Build the Telecom service.
 android_app {
     name: "Telecom",
-    libs: ["telephony-common"],
+    libs: [
+        "telephony-common",
+        "radio_interactor_common",
+        "ims-common",
+        "unisoc_ims_common"
+    ],
     srcs: [
-        "src/**/*.java",
+        "src/com/android/**/*.java",
+        "src/com/unisoc/server/telecom/sensor/**/*.java",
+        "src/com/unisoc/server/telecom/settings/**/*.java",
+        "src/com/unisoc/server/telecom/**/*.java",
+        "src/com/unisoc/server/plugins/*/*.java",
+        "src/com/unisoc/server/settings/*/*.java",
         "proto/**/*.proto",
     ],
     resource_dirs: ["res"],

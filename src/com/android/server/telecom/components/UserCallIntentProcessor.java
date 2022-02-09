@@ -99,6 +99,10 @@ public class UserCallIntentProcessor {
     private void processOutgoingCallIntent(Intent intent, String callingPackageName,
             boolean canCallNonEmergency, boolean isLocalInvocation) {
         Uri handle = intent.getData();
+        //UNISOC:add for bug1145099
+        if (handle == null) {
+            return;
+        }
         String scheme = handle.getScheme();
         String uriString = handle.getSchemeSpecificPart();
 

@@ -325,4 +325,27 @@
          blocking functionality (for test purposes).
          DO NOT TRANSLATE -->
     <string name="developer_enhanced_call_blocking" translatable="false">Enhanced Call Blocking</string>
+    <!-- Unisoc FL1000060380: Add feature of low battery for Reliance -->
+    <string name="low_battery_warning_title">"Low Battery Warning"</string>
+    <string name="low_battery_warning_message">"Your battery level is below 15%.Do you want to continue with the video call or covert to voice call?"</string>
+    <string name="low_battery_continue_video_call">"Yes"</string>
+    <string name="low_battery_convert_to_voice_call">"Convert"</string>
+
+    <!-- UNISOC Feature Porting: show main/vice card feature @{ -->
+    <string name="main_card_slot">Main Card: </string>
+    <string name="vice_card_slot">Vice Card: </string>
+    <!-- UNISOC:add for bug1147838 @{ -->
+    <string name="xliff_string1">SIM1</string>
+    <string name="xliff_string2">SIM2</string>
+    <!-- @} -->
+    <!--UNISOC Feature Porting: Flip to silence from incoming calls. @{-->
+    <string name="incomingcall_flipping_silence_title">Flip to silence call</string>
+    <string name="flipping_summary">Flip the phone to silence incoming call</string>
+    <!-- @} -->
+    <!-- UNISOC Feature Porting: Fade in ringer volume when incoming calls. @{ -->
+    <string name="fade_in_title">Fade-in ringer</string>
+    <string name="fade_in_summary">When enabled, incoming call ringer volume will be turned up.</string>
+    <!-- UNISOC:add for bug1381939 -->
+    <string name="forbidden_invite_call_message">"Can not invite when there has a conference call in hold state"</string>
+    <!-- @} -->
 </resources>

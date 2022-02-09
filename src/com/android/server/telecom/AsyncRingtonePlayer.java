@@ -25,7 +25,16 @@ import android.net.Uri;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Message;
+import android.provider.Settings;//add for bug1154641
 import android.telecom.Log;
+import android.content.SharedPreferences;
+import com.unisoc.server.settings.TelecommCallSettings;
+/* Unisoc FL0108020016: MaxRingingVolume and Vibrate. @{ */
+import android.os.SystemVibrator;
+import android.os.Vibrator;
+import android.media.AudioManager;
+import android.content.Context;
+/* @} */
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.os.SomeArgs;
@@ -43,6 +52,10 @@ public class AsyncRingtonePlayer {
     private static final int EVENT_PLAY = 1;
     private static final int EVENT_STOP = 2;
     private static final int EVENT_REPEAT = 3;
+    // UNISOC: Add for fade-in feature.
+    private static final int EVENT_FADE_IN = 4;
+    // Unisoc FL0108020015: Fade down ringtone to vibrate.
+    private static final int EVENT_FADEDOWN_RINGTONE = 5;
 
     // The interval in which to restart the ringer.
     private static final int RESTART_RINGER_MILLIS = 3000;
@@ -71,12 +84,47 @@ public class AsyncRingtonePlayer {
      */
     private boolean mShouldPauseBetweenRepeat = true;
 
+    /* Unisoc FL0108020016: MaxRingingVolume and Vibrate. @{ */
+    private boolean mIsMaxRingingVolumeOn = false;
+    private boolean mIsVibrating = false;
+    private Vibrator mVibrator;
+    private SystemSettingsUtil mSystemSettingsUtil;
+    private int mCanVibrateWhenRinging = -1;
+    private int mVolumeIndex;
+
+    // Indicate that we want the pattern to repeat at the step which turns on vibration.
+    private static final int VIBRATION_PATTERN_REPEAT = 1;
+    private static final long[] VIBRATION_PATTERN = new long[]{
+            0,    // No delay before starting
+            1000, // How long to vibrate
+            1000, // How long to wait before vibrating again
+    };
+    // UNISOC Feature Porting: Fade in ringer volume when incoming calls.
+    private float mVolume = 0f;
+
+    public AsyncRingtonePlayer(Context context) {
+        mContext = context;
+    }
+    private static final AudioAttributes VIBRATION_ATTRIBUTES = new AudioAttributes.Builder()
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+            .build();
+    /* @} */
+
+    /* Unisoc FL0108020015: Fade down ringtone to vibrate. */
+    private Context mContext;
+    /* @} */
+
     public AsyncRingtonePlayer() {
         // Empty
     }
 
-    public AsyncRingtonePlayer(boolean shouldPauseBetweenRepeat) {
+    public AsyncRingtonePlayer(boolean shouldPauseBetweenRepeat, Context context) {
+        mContext = context;
         mShouldPauseBetweenRepeat = shouldPauseBetweenRepeat;
+        // UNISOC: add for bug937935
+        mVibrator = (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
+        mSystemSettingsUtil = new SystemSettingsUtil();
     }
 
     /**
@@ -117,6 +165,36 @@ public class AsyncRingtonePlayer {
         postMessage(EVENT_STOP, false /* shouldCreateHandler */, null);
     }
 
+    /* Unisoc FL0108020016: MaxRingingVolume and Vibrate. @{ */
+    void handleMaxRingingVolume(Context context) {
+        Log.i(this, "maxRingingVolume.");
+        mIsMaxRingingVolumeOn = true;
+        if (!mIsVibrating) { //UNISOC:add for bug1283273 1376609
+            if (!mSystemSettingsUtil.canVibrateWhenRinging(context)) {
+                mSystemSettingsUtil.setVibrateWhenRinging(context,1);
+                mCanVibrateWhenRinging = 0;
+            }
+            mVibrator.vibrate(VIBRATION_PATTERN, VIBRATION_PATTERN_REPEAT,
+                    VIBRATION_ATTRIBUTES);
+            mIsVibrating = true;
+        }
+        AudioManager audioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
+        mVolumeIndex = audioManager.getStreamVolume(AudioManager.STREAM_RING);
+        audioManager.setStreamVolume(AudioManager.STREAM_RING, 7,0);
+    }
+    /* @} */
+
+    // UNISOC: add for bug937206
+    void stopMaxRingingVolume(Context context) {
+        Log.i(this, "stopMaxRingingVolume.");
+        if (mIsMaxRingingVolumeOn) {
+            AudioManager audioManager = (AudioManager) context.getSystemService(
+                    Context.AUDIO_SERVICE);
+            audioManager.setStreamVolume(AudioManager.STREAM_RING, mVolumeIndex, 0);
+            mIsMaxRingingVolumeOn = false;
+        }
+    }
+
     /**
      * Posts a message to the ringtone-thread handler. Creates the handler if specified by the
      * parameter shouldCreateHandler.
@@ -132,6 +210,16 @@ public class AsyncRingtonePlayer {
 
             if (mHandler == null) {
                 Log.d(this, "Message %d skipped because there is no handler.", messageCode);
+                /*UNISOC: add for bug1283273 */
+                if (mIsVibrating && messageCode == EVENT_STOP) {
+                    Log.i(this, "handler is null, stop the vibration.");
+                    mVibrator.cancel();
+                    mIsVibrating = false;
+                    if (mCanVibrateWhenRinging > -1) {
+                        mSystemSettingsUtil.setVibrateWhenRinging(mContext, mCanVibrateWhenRinging);
+                        mCanVibrateWhenRinging = -1;
+                    }
+                }
             } else {
                 mHandler.obtainMessage(messageCode, args).sendToTarget();
             }
@@ -148,6 +236,8 @@ public class AsyncRingtonePlayer {
         thread.start();
 
         return new Handler(thread.getLooper(), null /*callback*/, true /*async*/) {
+            // Unisoc FL0108020015: Fade down ringtone to vibrate.
+            float mCurrentVolume = 1.0f;
             @Override
             public void handleMessage(Message msg) {
                 switch(msg.what) {
@@ -160,6 +250,38 @@ public class AsyncRingtonePlayer {
                     case EVENT_STOP:
                         handleStop();
                         break;
+                    /* UNISOC Feature Porting: Fade in ringer volume when incoming calls. */
+                    case EVENT_FADE_IN:
+                        mVolume += 0.05f;
+                        if (mVolume < 1f && mRingtone != null) {
+                            mRingtone.setVolume(mVolume);
+                            synchronized (AsyncRingtonePlayer.this){//add for bug1158476
+                                mHandler.sendEmptyMessageDelayed(EVENT_FADE_IN, 600);// UNISOC: modify for bug1154641
+                            }
+                        }
+                        break;
+                    /* @} */
+                    /* @} */
+                    /* Unisoc FL0108020015: Fade down ringtone to vibrate. */
+                    case EVENT_FADEDOWN_RINGTONE:
+                        mCurrentVolume -= .05f;
+                        if (mCurrentVolume > .05f) {
+                            mHandler.sendEmptyMessageDelayed(EVENT_FADEDOWN_RINGTONE, 500);
+                        } else if (!mIsVibrating) {
+                            mCurrentVolume = 0f;
+                            if (!mSystemSettingsUtil.canVibrateWhenRinging(mContext)) {
+                                mCanVibrateWhenRinging = 0;
+                                mSystemSettingsUtil.setVibrateWhenRinging(mContext, 1);
+                            }
+                            mVibrator.vibrate(VIBRATION_PATTERN, VIBRATION_PATTERN_REPEAT,
+                                    VIBRATION_ATTRIBUTES);
+                            mIsVibrating = true;
+                        }
+                        if (mRingtone != null) {
+                            mRingtone.setVolume(mCurrentVolume);
+                        }
+                        break;
+                    /* @} */
                 }
             }
         };
@@ -241,6 +363,11 @@ public class AsyncRingtonePlayer {
             mRingtone.play();
             Log.i(this, "Play ringtone, looping.");
         }
+        /*UNISOC Feature Porting: Fade in ringer volume when incoming calls. @{ */
+        if (mRingtone != null) {
+            handleFadeIn();
+        }
+        /* @} */
     }
 
     private void handleRepeat() {
@@ -274,6 +401,18 @@ public class AsyncRingtonePlayer {
             mRingtone.stop();
             mRingtone = null;
         }
+        // UNISOC Feature Porting: Fade in ringer volume when incoming calls.
+        mVolume = 0f;
+        /* Unisoc FL0108020015: Fade down ringtone to vibrate. @{ */
+        if (mIsVibrating) {
+            mVibrator.cancel();
+            mIsVibrating = false;
+            if (mCanVibrateWhenRinging > -1) {
+                mSystemSettingsUtil.setVibrateWhenRinging(mContext, mCanVibrateWhenRinging);
+                mCanVibrateWhenRinging = -1;
+            }
+        }
+        /* @} */
 
         synchronized(this) {
             // At the time that STOP is handled, there should be no need for repeat messages in the
@@ -283,6 +422,10 @@ public class AsyncRingtonePlayer {
             if (mHandler.hasMessages(EVENT_PLAY)) {
                 Log.v(this, "Keeping alive ringtone thread for subsequent play request.");
             } else {
+                // Unisoc FL0108020015: Fade down ringtone to vibrate.
+                mHandler.removeMessages(EVENT_FADEDOWN_RINGTONE);
+               // UNISOC Feature Porting: Fade in ringer volume when incoming calls.
+                mHandler.removeMessages(EVENT_FADE_IN);
                 mHandler.removeMessages(EVENT_STOP);
                 mHandler.getLooper().quitSafely();
                 mHandler = null;
@@ -290,4 +433,26 @@ public class AsyncRingtonePlayer {
             }
         }
     }
+    /* Unisoc FL0108020015: Fade down ringtone to vibrate. @{ */
+    void fadeDownRingtone(Context context) {
+        Log.d(this, "fadeDownRingtone.");
+        postMessage(EVENT_FADEDOWN_RINGTONE, false /* shouldCreateHandler */, null);
+    }
+    /* @} */
+    /* UNISOC Feature Porting: Fade in ringer volume when incoming calls. @{ */
+    private void handleFadeIn() {
+        if (isFeatrueFlipToSilenceEnabled() && mRingtone != null) {
+            Log.i(this, "fade-in.");
+            mRingtone.setVolume(0.05f);
+            postMessage(EVENT_FADE_IN, false /* shouldCreateHandler */, null);
+        }
+    }
+
+    private boolean isFeatrueFlipToSilenceEnabled() {
+        // UNISOC: modify for bug1154641
+        boolean isFadeInEnabled = Settings.Global.getInt(mContext.getContentResolver(),
+                TelecommCallSettings.FADE_IN_ON, 0) != 0;
+        return isFadeInEnabled;
+    }
+    /* @} */
 }

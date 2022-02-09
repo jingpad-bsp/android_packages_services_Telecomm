@@ -28,6 +28,11 @@ import android.view.KeyEvent;
 
 import com.android.internal.annotations.VisibleForTesting;
 
+/* Unisoc FL0108020022: Add for double press handset media button feature. @{ */
+import android.telephony.CarrierConfigManager;
+import android.telephony.CarrierConfigManagerEx;
+/* @} */
+
 /**
  * Static class to handle listening to the headset media buttons.
  */
@@ -38,6 +43,8 @@ public class HeadsetMediaButton extends CallsManagerListenerBase {
     public static final int SHORT_PRESS = 1;
     @VisibleForTesting
     public static final int LONG_PRESS = 2;
+    @VisibleForTesting
+    public static final int DOUBLE_PRESS = 3; //Unisoc FL0108020022: Add for double press handset media button feature.
 
     private static final AudioAttributes AUDIO_ATTRIBUTES = new AudioAttributes.Builder()
             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
@@ -104,6 +111,12 @@ public class HeadsetMediaButton extends CallsManagerListenerBase {
     private final TelecomSystem.SyncRoot mLock;
     private MediaSession mSession;
     private KeyEvent mLastHookEvent;
+    /* Unisoc FL0108020022: Add for double press handset media button feature. @{ */
+    private static final long DOUBLE_PRESS_TIME = 500;
+    private Boolean mIsDoublePress = false;
+    private CheckDoublePress mPendingCheckDoublePress = null;
+    Handler mHandler = new Handler();
+    /* @} */
 
     public HeadsetMediaButton(
             Context context,
@@ -133,13 +146,29 @@ public class HeadsetMediaButton extends CallsManagerListenerBase {
 
         if (event.isLongPress()) {
             return mCallsManager.onMediaButton(LONG_PRESS);
-        } else if (event.getAction() == KeyEvent.ACTION_UP) {
+        } else if ((event.getAction() == KeyEvent.ACTION_UP)
+                    // Add for bug895699 : avoid key up event treat as short click
+                    && (mLastHookEvent != null) && (!mLastHookEvent.isLongPress()) ) {
             // We should not judge SHORT_PRESS by ACTION_UP event repeatCount, because it always
             // return 0.
             // Actually ACTION_DOWN event repeatCount only increases when LONG_PRESS performed.
-            if (mLastHookEvent != null && mLastHookEvent.getRepeatCount() == 0) {
+            /* Unisoc FL0108020022: Add for double press handset media button feature. @{*/
+            if (isSupportDoublePressOnHeadsetKey()) {
+                if (!mIsDoublePress) {
+                    mIsDoublePress = true;
+                    if (mPendingCheckDoublePress == null) {
+                        mPendingCheckDoublePress = new CheckDoublePress();
+                    }
+                    mHandler.postDelayed(mPendingCheckDoublePress, DOUBLE_PRESS_TIME);
+                } else {
+                    // press twice within 500 millisecond means double press.
+                    mIsDoublePress = false;
+                    doublePress();
+                }
+            } else if (mLastHookEvent != null && mLastHookEvent.getRepeatCount() == 0) {
                 return mCallsManager.onMediaButton(SHORT_PRESS);
             }
+            /* @} */
         }
 
         if (event.getAction() != KeyEvent.ACTION_DOWN) {
@@ -178,4 +207,41 @@ public class HeadsetMediaButton extends CallsManagerListenerBase {
             onCallAdded(call);
         }
     }
+
+    /* Unisoc FL0108020022: Add for double press handset media button feature. @{ */
+    private boolean isSupportDoublePressOnHeadsetKey() {
+        CarrierConfigManager configManager = (CarrierConfigManager)
+                mContext.getSystemService(Context.CARRIER_CONFIG_SERVICE);
+        if (configManager.getConfigForDefaultPhone() != null) {
+            return configManager.getConfigForDefaultPhone().getBoolean(
+                    CarrierConfigManagerEx.KEY_FEATURE_DOUBLE_PRESS_ON_HEADSET_KEY_BOOL);
+        }
+        return false;
+    }
+
+    private void singlePress() {
+        Log.d(this, "singlePress...");
+        if (mLastHookEvent != null && mLastHookEvent.getRepeatCount() > 0) {
+            Log.d(this, "last hook event repeatCount bigger than 0.");
+            return;
+        }
+        mCallsManager.onMediaButton(SHORT_PRESS);
+        mLastHookEvent = null;
+    }
+
+    private void doublePress() {
+        Log.d(this, "doublePress...");
+        mCallsManager.onMediaButton(DOUBLE_PRESS);
+    }
+
+    class CheckDoublePress implements java.lang.Runnable {
+
+        public void run() {
+            if (mIsDoublePress) {
+                singlePress();
+            }
+            mIsDoublePress = false;
+        }
+    }
+    /* @} */
 }

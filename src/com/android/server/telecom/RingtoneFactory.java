@@ -29,13 +29,17 @@ import android.net.Uri;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.provider.Settings;
+import android.database.Cursor;
 
 import android.telecom.Log;
 import android.telecom.PhoneAccount;
+import android.telephony.SubscriptionManager;
 import android.text.TextUtils;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.CallerInfo;
+import android.os.AsyncTask;
+import android.provider.MediaStore;
 
 import java.util.List;
 
@@ -49,6 +53,8 @@ public class RingtoneFactory {
 
     private final Context mContext;
     private final CallsManager mCallsManager;
+    private boolean isRingtoneAvaliable = false;
+    private RingtongUriAsyncTask mTask;
 
     public RingtoneFactory(CallsManager callsManager, Context context) {
         mContext = context;
@@ -75,21 +81,36 @@ public class RingtoneFactory {
         Uri ringtoneUri = incomingCall.getRingtone();
         Ringtone ringtone = null;
 
-        if(ringtoneUri != null && userContext != null) {
+        if(ringtoneUri != null && userContext != null ) {
             // Ringtone URI is explicitly specified. First, try to create a Ringtone with that.
-            ringtone = RingtoneManager.getRingtone(userContext, ringtoneUri, volumeShaperConfig);
+            mTask = new RingtongUriAsyncTask(userContext,ringtoneUri);
+            mTask.execute();
+            if (isRingtoneAvaliable) {
+               ringtone = RingtoneManager.getRingtone(userContext, ringtoneUri, volumeShaperConfig);
+            } else {
+                ringtone = null;
+            }
         }
         if(ringtone == null) {
             // Contact didn't specify ringtone or custom Ringtone creation failed. Get default
             // ringtone for user or profile.
-            Context contextToUse = hasDefaultRingtoneForUser(userContext) ? userContext : mContext;
+            /* Unisoc FL1000060354: Support multi-sim ringtone. @{*/
+            int subId = mCallsManager.getPhoneAccountRegistrar()
+                    .getSubscriptionIdForPhoneAccount(incomingCall.getTargetPhoneAccount());
+            int phoneId = SubscriptionManager.getPhoneId(subId);
+            Context contextToUse = hasDefaultRingtoneForUserForSlot(userContext, phoneId)
+                    ? userContext : mContext;
+            /* @} */
             Uri defaultRingtoneUri;
+            /* Unisoc FL1000060354: Support multi-sim ringtone. @{*/
             if (UserManager.get(contextToUse).isUserUnlocked(contextToUse.getUserId())) {
-                defaultRingtoneUri = RingtoneManager.getActualDefaultRingtoneUri(contextToUse,
-                        RingtoneManager.TYPE_RINGTONE);
+                int type = phoneId == 1 ? RingtoneManager.TYPE_RINGTONE1 : RingtoneManager.TYPE_RINGTONE;
+                defaultRingtoneUri = RingtoneManager.getActualDefaultRingtoneUri(contextToUse, type);
             } else {
-                defaultRingtoneUri = Settings.System.DEFAULT_RINGTONE_URI;
+                defaultRingtoneUri = phoneId == 1 ? Settings.System.DEFAULT_RINGTONE1_URI
+                        : Settings.System.DEFAULT_RINGTONE_URI;
             }
+            /* @} */
             if (defaultRingtoneUri == null) {
                 return null;
             }
@@ -144,17 +165,71 @@ public class RingtoneFactory {
         return null;
     }
 
-    private boolean hasDefaultRingtoneForUser(Context userContext) {
+    /* Unisoc FL1000060354: Support multi-sim ringtone. @{*/
+    private boolean hasDefaultRingtoneForUserForSlot(Context userContext, int phoneId) {
         if(userContext == null) {
             return false;
         }
+        String ringtoneSetting = phoneId == 1 ? Settings.System.RINGTONE1
+                : Settings.System.RINGTONE;
         return !TextUtils.isEmpty(Settings.System.getStringForUser(userContext.getContentResolver(),
-                Settings.System.RINGTONE, userContext.getUserId()));
+                ringtoneSetting, userContext.getUserId()));
     }
+    /* @} */
 
     private boolean isWorkContact(Call incomingCall) {
         CallerInfo contactCallerInfo = incomingCall.getCallerInfo();
         return (contactCallerInfo != null) &&
                 (contactCallerInfo.userType == CallerInfo.USER_TYPE_WORK);
     }
+
+    /* UNISOC: add for bug1425847 @{ */
+    private class RingtongUriAsyncTask extends AsyncTask<Void, Void, Boolean> {
+        private Context context;
+        private Uri uri;
+
+
+        public RingtongUriAsyncTask(Context context,  Uri uri) {
+            this.context = context;
+            this.uri = uri;
+
+        }
+
+        @Override
+        protected Boolean doInBackground(Void... params) {
+            if (context == null || uri == null) return false;
+            boolean isRingtongUriAvailable = false;
+            Cursor cursor = null;
+            try {
+                cursor = context.getContentResolver().query(uri,
+                        new String[]{MediaStore.Audio.Media._ID}, null, null, null);
+                if (cursor != null) {
+                    if (cursor.moveToFirst()) {
+                        int columnIndex = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID);
+                        if (columnIndex > -1) {
+                            isRingtongUriAvailable = true;
+                        } else {
+                            isRingtongUriAvailable = false;
+                        }
+                    }
+                } else {
+                    isRingtongUriAvailable = false;
+                }
+            } catch (Exception sqle) {
+                Log.w("RingtoneFactory.isRingtongUriAvailable" , sqle.getMessage());
+            } finally{
+                //modify for bug1408722
+                if (cursor != null) {
+                    cursor.close();
+                }
+            }
+            return isRingtongUriAvailable;
+        }
+
+        @Override
+        protected void onPostExecute(Boolean result) {
+            isRingtoneAvaliable = result;
+        }
+    }
+    /* @} */
 }

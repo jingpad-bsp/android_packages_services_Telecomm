@@ -27,6 +27,9 @@ import android.util.SparseArray;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.util.IndentingPrintWriter;
 import com.android.server.telecom.bluetooth.BluetoothStateReceiver;
+// Unisoc FL1000062187: Local RingBackTone Feature.
+import com.unisoc.server.telecom.RingBackTone;
+import com.unisoc.server.plugins.LocalTone.LocalToneHelper;
 
 import java.util.Collection;
 import java.util.HashSet;
@@ -224,10 +227,13 @@ public class CallAudioManager extends CallsManagerListenerBase {
             return;
         }
 
+        /* UNISOC delete for bug1141431. @{
+         * @orig
         // Turn off mute when a new incoming call is answered iff it's not a handover.
         if (!call.isHandoverInProgress()) {
-            mute(false /* shouldMute */);
-        }
+            Log.i(this, "mute");
+            mute(false);
+        }*/
 
         maybeStopRingingAndCallWaitingForAnsweredOrRejectedCall(call);
     }
@@ -242,6 +248,9 @@ public class CallAudioManager extends CallsManagerListenerBase {
             // We only play tones for foreground calls.
             return;
         }
+        //UNISOC:add for bug1192597
+        boolean sesseionModifyOnRequest = mCallsManager.getSessionModifyOnRequest();
+        boolean isplayTone = mCallsManager.getPlayToneDone();
 
         int previousVideoState = call.getVideoState();
         int newVideoState = videoProfile.getVideoState();
@@ -250,10 +259,13 @@ public class CallAudioManager extends CallsManagerListenerBase {
 
         boolean isUpgradeRequest = !VideoProfile.isReceptionEnabled(previousVideoState) &&
                 VideoProfile.isReceptionEnabled(newVideoState);
-
-        if (isUpgradeRequest) {
+        //UNISOC:add for bug1192597
+        Log.i(this, "onSessionModifyRequestReceived : sesseionModifyOnRequest = "
+                + sesseionModifyOnRequest + "already play tone = " + isplayTone);
+        if (isUpgradeRequest && sesseionModifyOnRequest && !isplayTone) {
             mPlayerFactory.createPlayer(InCallTonePlayer.TONE_VIDEO_UPGRADE).startTone();
         }
+        mCallsManager.setPlayToneDone(true);
     }
 
     /**
@@ -282,9 +294,12 @@ public class CallAudioManager extends CallsManagerListenerBase {
     @Override
     public void onRingbackRequested(Call call, boolean shouldRingback) {
         if (call == mForegroundCall && shouldRingback) {
-            mRingbackPlayer.startRingbackForCall(call);
+            RingBackTone.getInstance(call.getContext()).playRingBackTone();
+            LocalToneHelper.getInstance(call.getContext()).playRingBackTone();
+            //mRingbackPlayer.startRingbackForCall(call);
         } else {
-            mRingbackPlayer.stopRingbackForCall(call);
+            RingBackTone.getInstance(call.getContext()).stopRingBackTone();
+            //mRingbackPlayer.stopRingbackForCall(call);
         }
     }
 
@@ -430,7 +445,9 @@ public class CallAudioManager extends CallsManagerListenerBase {
                 CallAudioRouteStateMachine.INCLUDE_BLUETOOTH_IN_BASELINE);
     }
 
-    void silenceRingers() {
+    // Unisoc FL0108020014: Flip to mute for incoming call.
+    @VisibleForTesting
+    public void silenceRingers() {
         for (Call call : mRingingCalls) {
             call.silence();
         }
@@ -448,7 +465,13 @@ public class CallAudioManager extends CallsManagerListenerBase {
     @VisibleForTesting
     public void startCallWaiting(String reason) {
         if (mRingingCalls.size() == 1) {
+            // UNISOC: Support Telcel Operator requirement
+            if (mCallsManager.is3rdCallWaitingToneSupport()) {
+                mCallsManager.play3rdCallWaitingTone();
+                setIsTonePlaying(true);
+            } else {
             mRinger.startCallWaiting(mRingingCalls.iterator().next(), reason);
+            }
         }
     }
 
@@ -459,7 +482,12 @@ public class CallAudioManager extends CallsManagerListenerBase {
 
     @VisibleForTesting
     public void stopCallWaiting() {
+        // UNISOC: Support Telcel Operator requirement
+        if (mCallsManager.is3rdCallWaitingToneSupport()) {
+            mCallsManager.stop3rdCallWaitingTone();
+        } else {
         mRinger.stopCallWaiting();
+        }
     }
 
     @VisibleForTesting

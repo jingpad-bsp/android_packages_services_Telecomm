@@ -31,6 +31,9 @@ import android.widget.TextView;
 import com.android.server.telecom.R;
 
 public class BlockedNumbersAdapter extends SimpleCursorAdapter {
+    // UNISOC: add for bug1197335
+    private AlertDialog dialog;
+
     public BlockedNumbersAdapter(Context context, int layout, Cursor c, String[] from, int[] to,
             int flags) {
         super(context, layout, c, from, to, flags);
@@ -55,6 +58,12 @@ public class BlockedNumbersAdapter extends SimpleCursorAdapter {
             }
         });
     }
+    protected void onDestroy() {
+        // UNISOC: add for bug1197335
+        if (dialog != null) {
+            dialog.dismiss();
+        }
+    }
 
     private void showDeleteBlockedNumberDialog(final Context context, final String rawNumber,
             final String formattedNumber) {
@@ -63,7 +72,8 @@ public class BlockedNumbersAdapter extends SimpleCursorAdapter {
         Spannable messageSpannable = new SpannableString(message);
         PhoneNumberUtils.addTtsSpan(messageSpannable, startingPosition,
                 startingPosition + formattedNumber.length());
-        new AlertDialog.Builder(context)
+        // UNISOC: add for bug1197335
+        dialog = new AlertDialog.Builder(context)
                 .setMessage(messageSpannable)
                 .setPositiveButton(R.string.unblock_button,
                         new DialogInterface.OnClickListener() {
@@ -79,8 +89,8 @@ public class BlockedNumbersAdapter extends SimpleCursorAdapter {
                             }
                         }
                 )
-                .create()
-                .show();
+                .create();
+        dialog.show();
     }
 
     private void deleteBlockedNumber(Context context, String number) {
